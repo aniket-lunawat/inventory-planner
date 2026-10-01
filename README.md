@@ -14,7 +14,7 @@ An inventory and demand planning tool built in Python, SQL and Streamlit. It ans
 
 | | Simulated manufacturer | Real wholesaler |
 |---|---|---|
-| What it is | A made-up Indian maker of magnetic inspection tools, modeled on a typical small Indian manufacturer | UK online gift wholesaler, *Online Retail II* (UCI Machine Learning Repository) |
+| What it is | A made-up Indian maker of magnetic inspection tools | UK online gift wholesaler, *Online Retail II* (UCI Machine Learning Repository) |
 | Size | 24 products, 40 customers, 5 suppliers, 2 years | 1,067,371 invoice lines, 5,305 stock codes, 43 countries, 2 years |
 | Why | Has stock levels, suppliers and lead times, which public data lacks | Real, messy demand, which tests the cleaning and forecasting |
 

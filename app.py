@@ -119,7 +119,7 @@ with tab1:
     only_action = st.toggle("Show only products that need action", value=True)
     if only_action:
         table = table[~table.Status.str.contains("OK|Make to order")]
-    st.dataframe(table, hide_index=True, use_container_width=True,
+    st.dataframe(table, hide_index=True, width="stretch",
                  column_config={"Reorder at": st.column_config.NumberColumn(format="%d")})
     st.download_button("Download order list (Excel/CSV)",
                        order_now[["product_name", "supplier_name", "suggested_order_units",
@@ -150,7 +150,7 @@ with tab2:
         hovertemplate="%{x|%b %Y}<br>%{customdata[0]}<extra></extra>"))
     fig.update_yaxes(title="₹ lakh")
     fig.update_xaxes(dtick="M2", tickformat="%b %y")
-    st.plotly_chart(style_fig(fig), use_container_width=True)
+    st.plotly_chart(style_fig(fig), width="stretch")
     best, worst = tot.loc[tot.revenue_inr.idxmax()], tot.loc[tot.revenue_inr.idxmin()]
     st.caption(f"Best month: {best.month:%b %Y} ({m(best.revenue_inr)}). "
                f"Slowest: {worst.month:%b %Y} ({m(worst.revenue_inr)}). Hover a bar for exact figures.")
@@ -169,7 +169,7 @@ with tab2:
         customdata=[[cfg.money(v), c] for v, c in zip(top.revenue_inr, top.abc_class)],
         hovertemplate="%{y}<br>%{customdata[0]}<br>Class %{customdata[1]}<extra></extra>"))
     fig.update_xaxes(title="₹ lakh")
-    st.plotly_chart(style_fig(fig, height=620), use_container_width=True)
+    st.plotly_chart(style_fig(fig, height=620), width="stretch")
     st.caption("A = top products making up 80% of sales · B = next 15% · C = last 5%")
 
 # ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ with tab3:
     st.dataframe(f[["product_name", "last_3_months_avg", "forecast_units", "on_hand_units", "Enough stock?"]]
                  .rename(columns={"product_name": "Product", "last_3_months_avg": "Avg last 3 months",
                                   "forecast_units": "Forecast (units)", "on_hand_units": "In stock"}),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------------------
 # 4. Stuck stock
@@ -200,7 +200,7 @@ with tab4:
             ["product_name", "on_hand_units", "Value", "days_since_last_sale"]].rename(columns={
                 "product_name": "Product", "on_hand_units": "In stock",
                 "days_since_last_sale": "Days since last sale"}),
-            hide_index=True, use_container_width=True)
+            hide_index=True, width="stretch")
         st.caption("Ideas: offer to regular customers at a discount, bundle with yokes, or stop making.")
     with c2:
         st.markdown(f"**More than {cfg.OVERSTOCK_MONTHS} months of stock** · "
@@ -209,7 +209,7 @@ with tab4:
                                  Months=(over.days_of_cover / 30).round(0).astype(int))[
             ["product_name", "on_hand_units", "Months", "Value"]].rename(columns={
                 "product_name": "Product", "on_hand_units": "In stock", "Months": "Months of stock"}),
-            hide_index=True, use_container_width=True)
+            hide_index=True, width="stretch")
         st.caption("Pause production of these until stock comes down.")
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ with tab5:
     st.dataframe(suppliers.drop(columns="supplier_id").rename(columns={
         "supplier_name": "Supplier", "deliveries": "Deliveries", "avg_promised_days": "Promised (days)",
         "avg_actual_days": "Actual (days)", "avg_days_late": "Avg days late", "on_time_pct": "On time %"}),
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
         column_config={"On time %": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100)})
     st.caption(f"On time = delivered no more than {cfg.ON_TIME_GRACE_DAYS} days after the promised lead time.")
 
@@ -236,7 +236,7 @@ with tab5:
            "Stock value": turns.stock_value_inr.apply(cfg.money)})[
         ["category", "Cost of goods sold (12 mo)", "Stock value", "turnover", "days_of_inventory"]].rename(columns={
             "category": "Category", "turnover": "Turns a year", "days_of_inventory": "Days of inventory"}),
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
         column_config={"Turns a year": st.column_config.NumberColumn(format="%.1f"),
                        "Days of inventory": st.column_config.NumberColumn(format="%.0f")})
     st.caption("Turnover = cost of goods sold in 12 months ÷ value of stock on hand today.")
@@ -257,7 +257,7 @@ with tab6:
         "Average stock value": sim.avg_stock_value_inr.apply(cfg.money),
         "Yearly holding cost": sim.yearly_holding_cost_inr.apply(cfg.money),
     })
-    st.dataframe(view, hide_index=True, use_container_width=True)
+    st.dataframe(view, hide_index=True, width="stretch")
     lo, hi = sim.iloc[1], sim.iloc[-1]
     extra = hi.avg_stock_value_inr - lo.avg_stock_value_inr
     st.write(f"Going from **{lo.target_service_level:.0%} to {hi.target_service_level:.0%}** adds "
@@ -271,7 +271,7 @@ with tab6:
     fig.update_xaxes(title="Average stock value (₹ lakh)")
     fig.update_yaxes(title="Demand met from stock (%)",
                      range=[sim.fill_rate.min() * 100 - 0.4, sim.fill_rate.max() * 100 + 0.4])
-    st.plotly_chart(style_fig(fig, 320), use_container_width=True)
+    st.plotly_chart(style_fig(fig, 320), width="stretch")
     st.caption("Targets are per order cycle. Demand met counts units (weighted by value), so it runs higher "
                "than the target. Unmet demand is treated as a lost sale.")
 
@@ -280,9 +280,7 @@ with tab6:
 # ---------------------------------------------------------------------------
 @st.cache_data
 def real():
-    a = rd.abc()
-    t, mx = rd.abc_xyz()
-    return rd.cleaning_log(), a, mx, rd.monthly(), rd.returns_summary(), rd.forecast_backtest()
+    return rd.load_results()
 
 
 def gbp(v):
@@ -294,7 +292,7 @@ with tab7:
     st.write("Real transactions from 2 years (Dec 2009 to Dec 2011) of a UK online wholesaler selling gifts "
              "and homeware, mostly to other businesses. Public dataset: *Online Retail II*, UCI Machine "
              "Learning Repository. Money in pounds.")
-    if not rd.available():
+    if not rd.results_available():
         st.warning("The real dataset isn't loaded yet. Run `python src/real_data.py` once "
                    "(downloads about 45 MB and takes 2 to 3 minutes).")
     else:
@@ -314,7 +312,7 @@ with tab7:
         st.dataframe(log.assign(**{"Value removed": log.value_removed_gbp.apply(lambda v: gbp(v) if v else "")})[
             ["step", "rows_removed", "Value removed", "why"]].rename(columns={
                 "step": "Step", "rows_removed": "Rows removed", "why": "Why"}),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
             column_config={"Rows removed": st.column_config.NumberColumn(format="%d")})
 
         st.markdown("#### 2. Sales each month")
@@ -323,7 +321,7 @@ with tab7:
                                hovertemplate="%{x|%b %Y}<br>£%{y:,.0f}k<extra></extra>"))
         fig.update_yaxes(title="£ thousand")
         fig.update_xaxes(dtick="M2", tickformat="%b %y")
-        st.plotly_chart(style_fig(fig, 300), use_container_width=True)
+        st.plotly_chart(style_fig(fig, 300), width="stretch")
         peak = full.loc[full.revenue_gbp.idxmax()]
         st.caption(f"Strong pre-Christmas season: the peak was {peak.month:%B %Y} at {gbp(peak.revenue_gbp)}. "
                    "December 2011 is left out because the data stops on the 9th.")
@@ -337,7 +335,7 @@ with tab7:
         grid.index = grid.index.map({"A": "A (top 80% of sales)", "B": "B (next 15%)", "C": "C (last 5%)"})
         grid.columns = grid.columns.map({"X": "X steady", "Y": "Y variable", "Z": "Z erratic"})
         grid.index.name = "Value \\ Demand"
-        st.dataframe(grid, use_container_width=True)
+        st.dataframe(grid, width="stretch")
         ax = mx[(mx.abc_class == "A") & (mx.xyz_class == "X")].iloc[0]
         cz = mx[(mx.abc_class == "C") & (mx.xyz_class == "Z")].iloc[0]
         st.write(f"**AX ({int(ax.products)} products, {ax.revenue_share:.0%} of sales):** high value and "
@@ -352,7 +350,7 @@ with tab7:
             "Error per product": (bt["table"].product_wape * 100).round(1).astype(str) + "%",
             "Error on total volume": (bt["table"].total_error * 100).round(1).astype(str) + "%"})
         st.dataframe(tbl[["method", "Error per product", "Error on total volume"]].rename(columns={"method": "Method"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         bp, btot = bt["best_product"], bt["best_total"]
         st.write(f"**Finding:** seasonality helps when forecasting the business as a whole "
                  f"(**{btot.method}**: {btot.total_error:.0%} error) but hurts at product level, where "
@@ -370,7 +368,7 @@ with tab7:
         fig.update_xaxes(tickformat="%b %Y")
         fig = style_fig(fig, 300)
         fig.update_layout(showlegend=True, legend=dict(orientation="h", y=1.12, x=0))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         st.markdown("#### 5. Returns by country")
         top_r = rret.iloc[0]
@@ -378,4 +376,4 @@ with tab7:
                  f"{top_r.return_rate_pct:.0f}%, worth checking with the account manager.")
         st.dataframe(rret.assign(**{"Sold": rret.sold_gbp.apply(gbp), "Returned": rret.returned_gbp.apply(gbp)})[
             ["country", "Sold", "Returned", "return_rate_pct"]].rename(columns={
-                "country": "Country", "return_rate_pct": "Return rate %"}), hide_index=True, use_container_width=True)
+                "country": "Country", "return_rate_pct": "Return rate %"}), hide_index=True, width="stretch")

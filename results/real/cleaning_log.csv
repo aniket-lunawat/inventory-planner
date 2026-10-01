@@ -1,0 +1,10 @@
+step,rows_removed,value_removed_gbp,why
+Raw file,0,0.0,"1,067,371 invoice lines to start with"
+Exact duplicates,34335,560951.37,Same invoice line entered twice
+Cancellations,19104,1462797.7500000002,Invoices starting with C are returns/cancellations; kept aside for the returns analysis
+Accounting adjustments,6,169738.19999999998,"Invoices starting with A are bad-debt adjustments, not sales"
+Non-product codes,4784,822506.238,"Postage, carriage, manual entries, bank charges, Amazon fees, gift vouchers, test codes"
+Zero or negative quantity,3362,0.0,"Stock write-offs and damage notes (e.g. 'thrown away'), not customer demand"
+Zero or negative price,2566,0.0,Free samples and data errors
+Large orders later cancelled,46,315065.63,"Orders of 1,000+ units with an identical cancellation (e.g. 80,995 paper crafts), keyed in by mistake"
+Clean sales,0,0.0,"1,003,168 lines kept. Missing customer IDs (226,637 lines) are kept for demand but left out of customer analysis"

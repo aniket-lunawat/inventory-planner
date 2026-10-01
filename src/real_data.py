@@ -23,6 +23,7 @@ import config as cfg
 
 REAL_DIR = cfg.ROOT / "data" / "real"
 CSV = REAL_DIR / "online_retail_ii.csv.gz"
+RESULTS_DIR = cfg.ROOT / "results" / "real"   # small summary files, committed, used by the online app
 DB = REAL_DIR / "retail.db"
 URL = "https://archive.ics.uci.edu/static/public/502/online+retail+ii.zip"
 PRODUCT_CODE = r"^\d{5}[A-Za-z]*$"   # real products: 5 digits plus an optional letter (colour/size)
@@ -227,6 +228,7 @@ def build():
     sales, returns, log = clean(read_raw())
     load(sales, returns)
     log.to_csv(REAL_DIR / "cleaning_log.csv", index=False)
+    export_results()
     return log
 
 
@@ -235,7 +237,47 @@ def cleaning_log() -> pd.DataFrame:
 
 
 def available() -> bool:
+    """True if the full real-data database has been built on this computer."""
     return DB.exists() and (REAL_DIR / "cleaning_log.csv").exists()
+
+
+# ---------------------------------------------------------------------------
+# Summary results: the database is 130 MB, too big for GitHub, so the analysis
+# outputs are saved as small CSVs. The online dashboard reads these.
+# ---------------------------------------------------------------------------
+def export_results():
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    cleaning_log().to_csv(RESULTS_DIR / "cleaning_log.csv", index=False)
+    a = abc()
+    a[["stock_code", "description", "revenue_gbp", "abc_class"]].to_csv(RESULTS_DIR / "abc.csv", index=False)
+    abc_xyz()[1].to_csv(RESULTS_DIR / "abc_xyz_matrix.csv", index=False)
+    monthly().to_csv(RESULTS_DIR / "monthly.csv", index=False)
+    returns_summary().to_csv(RESULTS_DIR / "returns_by_country.csv", index=False)
+    bt = forecast_backtest()
+    bt["table"].to_csv(RESULTS_DIR / "forecast_methods.csv", index=False)
+    bt["monthly"].to_csv(RESULTS_DIR / "forecast_monthly.csv", index=False)
+    pd.Series({"products": bt["products"], "months": bt["months"]}).to_json(RESULTS_DIR / "forecast_meta.json")
+
+
+def results_available() -> bool:
+    return available() or (RESULTS_DIR / "abc_xyz_matrix.csv").exists()
+
+
+def load_results():
+    """Everything the dashboard needs: from the database if built, else from the saved summaries."""
+    if available():
+        return cleaning_log(), abc(), abc_xyz()[1], monthly(), returns_summary(), forecast_backtest()
+    r = RESULTS_DIR
+    table = pd.read_csv(r / "forecast_methods.csv")
+    meta = pd.read_json(r / "forecast_meta.json", typ="series")
+    bt = {"table": table,
+          "monthly": pd.read_csv(r / "forecast_monthly.csv", parse_dates=["month"]),
+          "products": int(meta["products"]), "months": meta["months"],
+          "best_product": table.loc[table.product_wape.idxmin()],
+          "best_total": table.loc[table.total_error.idxmin()]}
+    return (pd.read_csv(r / "cleaning_log.csv"), pd.read_csv(r / "abc.csv"),
+            pd.read_csv(r / "abc_xyz_matrix.csv"), pd.read_csv(r / "monthly.csv", parse_dates=["month"]),
+            pd.read_csv(r / "returns_by_country.csv"), bt)
 
 
 if __name__ == "__main__":
