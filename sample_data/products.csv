@@ -1,0 +1,25 @@
+product_id,product_name,category,unit_cost_inr,unit_price_inr,supplier_id,lead_time_days
+P01,AC Electromagnetic Yoke,Yokes,14500,22500,S1,21
+P02,AC/DC Electromagnetic Yoke,Yokes,19800,31000,S1,21
+P03,Permanent Magnet Yoke,Yokes,6200,9800,S1,14
+P04,Battery-Operated Yoke,Yokes,24500,38500,S1,30
+P05,Red Magnetic Powder 1 kg,Consumables,520,950,S2,10
+P06,Black Magnetic Powder 1 kg,Consumables,480,900,S2,10
+P07,Fluorescent Magnetic Ink 5 L,Consumables,3100,5200,S2,15
+P08,Black Magnetic Ink Aerosol,Consumables,210,390,S3,7
+P09,White Contrast Paint Aerosol,Consumables,190,350,S3,7
+P10,Cleaner Aerosol,Consumables,150,280,S3,7
+P11,Pie Field Indicator,Test Pieces,900,1650,S4,20
+P12,Field Indicator Shims (set),Test Pieces,2800,4700,S4,25
+P13,Ring Test Block,Test Pieces,4200,7200,S4,30
+P14,Yoke Lift Test Weight 4.5 kg,Test Pieces,1300,2400,S4,20
+P15,UV-A Inspection Lamp,Lighting & Meters,16500,26500,S5,35
+P16,UV Light Meter,Lighting & Meters,21000,33000,S5,40
+P17,Gauss Meter,Lighting & Meters,18000,29000,S5,40
+P18,Settling Test Centrifuge Tube,Accessories,350,650,S4,14
+P19,Yoke Extension Legs (pair),Accessories,1100,2100,S1,14
+P20,Demagnetizer Coil,Equipment,38000,58000,S1,45
+P21,Prod Set with Cables,Accessories,7800,12500,S1,30
+P22,Old-Model Yoke Carry Case,Accessories,900,1500,S1,14
+P23,Magnetic Suspension Concentrate,Consumables,2600,4300,S2,15
+P24,Wet Horizontal MPI Bench,Equipment,285000,420000,S1,60
