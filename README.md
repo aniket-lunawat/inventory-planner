@@ -1,5 +1,7 @@
 # Inventory Planner
 
+**Live demo:** https://inventory-planner-aniket.streamlit.app
+
 An inventory and demand planning tool built in Python, SQL and Streamlit. It answers the questions an operations or supply chain team asks every week:
 
 1. **What should we reorder now, and how much?** Reorder points with safety stock, and economic order quantities.
