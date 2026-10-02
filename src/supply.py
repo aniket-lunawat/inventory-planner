@@ -76,6 +76,7 @@ def planning_table(z: float = cfg.SERVICE_LEVEL_Z) -> pd.DataFrame:
     few = t["lt_obs"].fillna(0) < 3
     t.loc[few, "lt_mean"] = t.loc[few, "lead_time_days"]
     t.loc[few, "lt_std"] = 0.2 * t.loc[few, "lead_time_days"]
+    t[["lt_mean", "lt_std"]] = t[["lt_mean", "lt_std"]].astype(float)
 
     d, sd, lt, slt = t.avg_daily_demand, t.std_daily_demand, t.lt_mean, t.lt_std
     t["safety_stock"] = np.ceil(safety_stock(z, d, sd, lt, slt))
@@ -175,7 +176,7 @@ def simulate_service_levels(levels=(0.90, 0.95, 0.98, 0.99), days=365, runs=300,
     rng = np.random.default_rng(seed)
     base = planning_table()
     stocked = base[~base["status"].isin(["Not selling", "Make to order"])]
-    hist = an.daily_units(365)
+    hist = an.daily_units().tail(365)   # up to a year of real daily demand
     lt_raw = an.run_sql("lead_times")
     rows = []
     for level in levels:
@@ -197,8 +198,8 @@ def simulate_service_levels(levels=(0.90, 0.95, 0.98, 0.99), days=365, runs=300,
         rows.append({
             "target_service_level": level,
             "z": round(z, 2),
-            "fill_rate": tot["served_w"] / tot["demand_w"],     # value-weighted share of demand met
-            "stockout_days_per_product": tot["stockout_days"] / len(plan),
+            "fill_rate": tot["served_w"] / max(tot["demand_w"], 1e-9),  # value-weighted share of demand met
+            "stockout_days_per_product": tot["stockout_days"] / max(len(plan), 1),
             "avg_stock_value_inr": tot["stock_value"],
             "yearly_holding_cost_inr": tot["stock_value"] * cfg.HOLDING_RATE,
             "safety_stock_value_inr": (plan["safety_stock"] * plan["unit_cost_inr"]).sum(),

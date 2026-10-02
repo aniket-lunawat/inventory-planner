@@ -12,6 +12,16 @@ An inventory and demand planning tool built in Python, SQL and Streamlit. It ans
 
 ![Reorder tab](docs/img/reorder.png)
 
+## Try it with your own data
+
+Open the [live demo](https://inventory-planner-aniket.streamlit.app), choose **My own data (upload)** in the sidebar, and:
+
+1. Download the blank Excel template (or the ready-made example, a bicycle parts distributor).
+2. Fill in 3 sheets: **products**, **sales** and **stock**. **purchases** and **suppliers** are optional; with purchase order and receipt dates the tool also scores suppliers and uses actual lead times.
+3. Upload it. Every tab recalculates for your business.
+
+The upload is checked first, with plain-English messages: missing sheets or columns, too little history (under 3 months), sales for unknown products, returns, bad dates. Common column names (SKU, Qty, Price, Date) are recognised, and Excel number IDs like 1001.0 are matched to 1001. Each upload gets its own temporary database, so visitors never see each other's data.
+
 ## Two datasets
 
 | | Simulated manufacturer | Real wholesaler |
@@ -61,13 +71,15 @@ CSV / Excel ──► clean + validate ──► SQLite ──► SQL queries �
 ```
 
 ```
-app.py                       dashboard (7 tabs)
+app.py                       dashboard (7 tabs, plus upload in the sidebar)
 src/config.py                settings: exchange rate, service level, costs, thresholds
 src/generate_sample_data.py  builds the simulated company
 src/load_db.py               loads and checks the simulated data
 src/analysis.py              ABC, idle stock, forecast and backtest
 src/supply.py                suppliers, safety stock, EOQ, turnover, service-level simulation
 src/real_data.py             downloads, cleans and analyses the real dataset
+src/upload.py                Excel template, upload checks, a private database per upload
+src/make_example_upload.py   builds the example file (a bicycle parts distributor)
 sql/                         schema and all analysis queries
 tests/                       checks for the formulas and cleaning steps
 docs/                        case study and screenshots
@@ -80,7 +92,7 @@ pip install -r requirements.txt
 python src/load_db.py            # simulated company (a few seconds)
 python src/real_data.py          # real dataset: downloads 45 MB, takes 2 to 3 minutes
 python -m streamlit run app.py
-python -m pytest -q              # 7 tests
+python -m pytest -q              # 10 tests
 ```
 
 ![Service level what-if](docs/img/what_if.png)

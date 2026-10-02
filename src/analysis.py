@@ -10,7 +10,9 @@ All the numbers behind the dashboard.
 Run on its own to print a summary:  python src/analysis.py
 """
 import sqlite3
+import threading
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -21,15 +23,36 @@ import config as cfg
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+# Which database to read. Normally data/inventory.db; the dashboard switches it
+# to an uploaded company's database. It is stored per thread, because the web
+# app serves each visitor on their own thread: one visitor's upload must never
+# change what another visitor sees.
+_active = threading.local()
+
+
+def use_db(path=None) -> None:
+    """Point every query at this database (None = the default one)."""
+    _active.db = Path(path) if path else None
+
+
+def db_path() -> Path:
+    return getattr(_active, "db", None) or cfg.DB_PATH
+
+
 def run_sql(name: str, params: dict | None = None) -> pd.DataFrame:
     sql = (cfg.SQL_DIR / f"{name}.sql").read_text(encoding="utf-8")
-    with sqlite3.connect(cfg.DB_PATH) as con:
+    with sqlite3.connect(db_path()) as con:
         return pd.read_sql_query(sql, con, params=params or {})
 
 
-@lru_cache(maxsize=1)
 def today() -> pd.Timestamp:
-    with sqlite3.connect(cfg.DB_PATH) as con:
+    """The 'as of' date of the stock count. Everything is measured back from it."""
+    return _today(str(db_path()))
+
+
+@lru_cache(maxsize=32)
+def _today(path: str) -> pd.Timestamp:
+    with sqlite3.connect(path) as con:
         return pd.Timestamp(con.execute("SELECT MAX(as_of_date) FROM stock").fetchone()[0])
 
 
@@ -89,7 +112,10 @@ def seasonal_index(m: pd.DataFrame) -> pd.Series:
     How busy each calendar month is compared with an average month, measured
     on total company units (more stable than per product). Halved towards 1.0
     so one unusual year doesn't swing the forecast too much.
+    With less than a year of history every month is treated as average (1.0).
     """
+    if len(m) < 12:
+        return pd.Series(1.0, index=range(1, 13))
     share = m.div(m.mean().replace(0, np.nan), axis=1)   # each product vs its own average
     by_month = share.mean(axis=1).groupby(m.index.month).mean()
     idx = 0.5 * by_month + 0.5
@@ -114,18 +140,21 @@ def forecast() -> tuple[pd.DataFrame, dict]:
     target = today().to_period("M").to_timestamp() + pd.offsets.MonthBegin(1)
     fc = _forecast_from(m, target, s_idx)
 
-    # backtest
+    # backtest: the last 6 months, or fewer if the history is short
+    # (each test month needs at least 3 earlier months)
+    n_test = max(0, min(6, len(m) - 3))
     errs, naive_errs, actual_total = 0.0, 0.0, 0.0
-    for i in range(len(m) - 6, len(m)):
+    for i in range(len(m) - n_test, len(m)):
         hist, actual = m.iloc[:i], m.iloc[i]
         pred = _forecast_from(hist, m.index[i], s_idx)
         errs += (pred - actual).abs().sum()
         naive_errs += (hist.iloc[-1] - actual).abs().sum()
         actual_total += actual.sum()
+    ok = actual_total > 0
     accuracy = {
-        "wape": errs / actual_total,             # weighted absolute % error
-        "naive_wape": naive_errs / actual_total,  # "same as last month"
-        "months_tested": 6,
+        "wape": errs / actual_total if ok else None,             # weighted absolute % error
+        "naive_wape": naive_errs / actual_total if ok else None,  # "same as last month"
+        "months_tested": n_test,
     }
 
     names = run_sql("stock_position").set_index("product_id")

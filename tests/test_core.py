@@ -83,3 +83,56 @@ def test_cleaning_steps():
     assert removed["Exact duplicates"] == 1
     assert removed["Large orders later cancelled"] == 1
     assert sales.revenue_gbp.sum() == pytest.approx(6 * 2.5 + 12 * 0.42)
+
+
+# ---------------------------------------------------------------------------
+# Upload: anyone's data, checked before it is used
+# ---------------------------------------------------------------------------
+import upload  # noqa: E402
+
+
+def _tiny_company(days=200):
+    dates = pd.date_range("2026-01-01", periods=days, freq="D")
+    return {
+        "products": pd.DataFrame({"SKU": [1001.0, 1002.0], "Product Name": ["Bolt", "Nut"],
+                                  "Unit Cost": ["₹1,200", 50], "Lead Time": [10, None]}),
+        "sales": pd.DataFrame({"Date": list(dates) * 2, "SKU": [1001] * days + ["1002"] * days,
+                               "Qty": [2] * days + [5] * days, "Price": [1500] * days + [80] * days}),
+        "stock": pd.DataFrame({"product_id": ["1001"], "on_hand_units": [30]}),
+    }
+
+
+def test_upload_accepts_messy_but_usable_data():
+    tables, errors, warnings, summary = upload.validate(_tiny_company())
+    assert errors == []
+    p = tables["products"].set_index("product_id")
+    assert list(p.index) == ["1001", "1002"]                 # 1001.0 from Excel matches "1001" in sales
+    assert p.loc["1001", "unit_cost_inr"] == 1200            # "₹1,200" read as a number
+    assert p.loc["1002", "lead_time_days"] == upload.DEFAULT_LEAD_TIME
+    assert len(tables["sales"]) == 400
+    stock = tables["stock"].set_index("product_id")["on_hand_units"]
+    assert stock["1002"] == 0                                 # missing stock row counted as 0
+    assert any("no stock row" in w for w in warnings)
+    assert any("No purchases sheet" in w for w in warnings)
+
+
+def test_upload_rejects_missing_sheet_and_short_history():
+    raw = _tiny_company()
+    del raw["stock"]
+    assert any("stock" in e for e in upload.validate(raw)[1])
+    assert any("at least 3 months" in e for e in upload.validate(_tiny_company(days=40))[1])
+
+
+def test_uploaded_data_is_analysed_without_touching_the_sample(tmp_path, monkeypatch):
+    import analysis as an
+    monkeypatch.setattr(upload, "UPLOAD_DIR", tmp_path)
+    tables, errors, _, _ = upload.validate(_tiny_company())
+    path = upload.build(tables, b"tiny")
+    an.use_db(path)
+    try:
+        plan = supply.planning_table()
+        assert set(plan.product_id) == {"1001", "1002"}
+        assert supply.supplier_scorecard().empty               # no purchases, no scorecard
+    finally:
+        an.use_db(None)
+    assert len(supply.planning_table()) == 24                  # sample company unchanged

@@ -30,9 +30,10 @@ CREATE TABLE customers (
     segment        TEXT
 );
 
--- One row per invoice line
+-- One row per invoice line (an invoice can have several lines)
 CREATE TABLE sales (
-    invoice_no      TEXT PRIMARY KEY,
+    line_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_no      TEXT,
     order_date      DATE NOT NULL,
     customer_id     TEXT REFERENCES customers(customer_id),
     product_id      TEXT NOT NULL REFERENCES products(product_id),

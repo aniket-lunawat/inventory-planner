@@ -14,6 +14,7 @@ import analysis as an  # noqa: E402
 import config as cfg  # noqa: E402
 import supply  # noqa: E402
 import real_data as rd  # noqa: E402
+import upload  # noqa: E402
 
 st.set_page_config(page_title="Inventory Planner", page_icon="📦", layout="wide")
 
@@ -27,9 +28,65 @@ STATUS_ICON = {"Order now": "🔴 Order now", "Overstock": "🟠 Overstock",
 # ---------------------------------------------------------------------------
 # Data (cached so the page is fast)
 # ---------------------------------------------------------------------------
-@st.cache_data
-def load():
-    if not cfg.DB_PATH.exists():
+# ---------------------------------------------------------------------------
+# Sidebar: which data to show (the simulated company, or the visitor's own)
+# ---------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def template_bytes():
+    return upload.template_xlsx()
+
+
+@st.cache_data(show_spinner="Checking your data...")
+def check_upload(files):
+    raw, blob = upload.read_upload(files)
+    tables, errors, warnings, summary = upload.validate(raw)
+    path = str(upload.build(tables, blob)) if tables else None
+    return path, errors, warnings, summary
+
+
+EXAMPLE = cfg.SAMPLE_DIR / "example_upload.xlsx"
+with st.sidebar:
+    st.header("Data")
+    mode = st.radio("Show results for", ["Sample company (simulated)", "My own data (upload)"],
+                    label_visibility="collapsed")
+    files = []
+    if mode.startswith("My own"):
+        st.markdown("**1. Get the template.** Fill in 3 sheets: products, sales, stock. "
+                    "Purchases and suppliers are optional.")
+        st.download_button("Download blank template (.xlsx)", template_bytes(),
+                           "inventory_planner_template.xlsx", width="stretch")
+        st.download_button("Or download an example to try", EXAMPLE.read_bytes(),
+                           "example_bike_parts_distributor.xlsx", width="stretch",
+                           help="A made-up bicycle parts distributor, already in the right format.")
+        st.markdown("**2. Upload it.** One Excel file, or CSVs named products.csv, sales.csv and so on.")
+        up = st.file_uploader("Upload", type=["xlsx", "csv"], accept_multiple_files=True,
+                              label_visibility="collapsed")
+        files = [(f.name, f.getvalue()) for f in up or []]
+        st.caption("Your file is only used to draw this page. It is not kept, and other visitors can't see it.")
+
+db_path, upload_warnings, upload_summary = None, [], {}
+if mode.startswith("My own"):
+    if not files:
+        st.title("Inventory Planner")
+        st.info("**Use the sidebar to upload your data.** Download the template, fill in your products, "
+                "sales and stock, and upload it. Every tab will then show results for your business. "
+                "No data yet? Download the example file and upload that.")
+        st.stop()
+    db_path, errors, upload_warnings, upload_summary = check_upload(files)
+    if errors:
+        st.title("Inventory Planner")
+        st.error("**Your file couldn't be used yet.** Fix these and upload it again:\n\n" +
+                 "\n".join(f"- {e}" for e in errors))
+        for w in upload_warnings:
+            st.warning(w)
+        st.stop()
+an.use_db(db_path)   # None = the simulated company
+
+
+@st.cache_data(show_spinner="Crunching the numbers...")
+def load(db):
+    an.use_db(db)
+    if db is None and not cfg.DB_PATH.exists():
         import load_db
         load_db.main()
     fc, acc = an.forecast()
@@ -37,13 +94,19 @@ def load():
             supply.supplier_scorecard(), supply.turnover())
 
 
-@st.cache_data
-def what_if():
+@st.cache_data(show_spinner="Simulating a year of orders, 300 times per service level...")
+def what_if(db):
+    an.use_db(db)
     return supply.simulate_service_levels()
 
 
-abc, monthly, idle, reorder, fc, acc, today, suppliers, turns = load()
+abc, monthly, idle, reorder, fc, acc, today, suppliers, turns = load(db_path)
 using_real = all((cfg.RAW_DIR / f"{t}.csv").exists() for t in ["sales", "products", "stock"])
+uploaded = db_path is not None
+
+
+def pct(v):
+    return "n/a" if v is None else f"{v:.0%}"
 
 
 def usd(inr):
@@ -71,7 +134,16 @@ def style_fig(fig, height=340):
 # ---------------------------------------------------------------------------
 st.title("Inventory Planner")
 st.caption(f"Stock as of {today:%d %b %Y}. Money in rupees, with US dollars at ₹{cfg.INR_PER_USD:.0f} = $1.")
-if not using_real:
+if uploaded:
+    u = upload_summary
+    st.success(f"**Your data:** {u['products']} products, {u['sales_rows']:,} sales lines from "
+               f"{u['first_sale']:%d %b %Y} to {u['last_sale']:%d %b %Y}, {u['purchases']:,} deliveries. "
+               "Amounts are shown with the ₹ sign whatever currency you used.")
+    if upload_warnings:
+        with st.expander(f"{len(upload_warnings)} thing(s) to check in your data"):
+            for w in upload_warnings:
+                st.markdown(f"- {w}")
+elif not using_real:
     st.info("**Simulated data.** A made-up company modeled on a small Indian manufacturer of magnetic "
             "inspection tools: 24 products, 40 customers, 2 years of orders. No real company figures are shown.")
 
@@ -90,8 +162,12 @@ with k3:
     st.metric("Money stuck in slow stock", cfg.inr_fmt(stuck))
     st.caption(f"{usd(stuck)} · idle or more than {cfg.OVERSTOCK_MONTHS} months of stock")
 with k4:
-    st.metric(f"Forecast accuracy", f"{1 - acc['wape']:.0%}")
-    st.caption(f"Tested on the last 6 months (simple guess: {1 - acc['naive_wape']:.0%})")
+    if acc["wape"] is None:
+        st.metric("Forecast accuracy", "n/a")
+        st.caption("Needs 4 or more full months of sales to test")
+    else:
+        st.metric("Forecast accuracy", f"{1 - acc['wape']:.0%}")
+        st.caption(f"Tested on the last {acc['months_tested']} months (simple guess: {1 - acc['naive_wape']:.0%})")
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🔴 Reorder now", "📈 What sells", "🔮 Next month", "📦 Stuck stock", "🚚 Suppliers",
@@ -177,9 +253,12 @@ with tab2:
 # ---------------------------------------------------------------------------
 with tab3:
     st.subheader(f"Expected demand in {fc.target_month.iloc[0]}")
-    st.write(f"Based on the last 3 months, adjusted for the time of year. Tested on the last "
-             f"6 months, it was off by **{acc['wape']:.0%}** on average, versus "
-             f"{acc['naive_wape']:.0%} for simply repeating last month.")
+    if acc["wape"] is None:
+        st.write("Based on the last 3 months. There isn't enough history yet to test its accuracy.")
+    else:
+        st.write(f"Based on the last 3 months, adjusted for the time of year (when there is a year of history). "
+                 f"Tested on the last {acc['months_tested']} months, it was off by **{acc['wape']:.0%}** "
+                 f"on average, versus {acc['naive_wape']:.0%} for simply repeating last month.")
     f = fc.copy()
     f["Enough stock?"] = (f.on_hand_units >= f.forecast_units).map({True: "🟢 Yes", False: "🔴 No"})
     st.dataframe(f[["product_name", "last_3_months_avg", "forecast_units", "on_hand_units", "Enough stock?"]]
@@ -216,10 +295,15 @@ with tab4:
 # 5. Suppliers
 # ---------------------------------------------------------------------------
 with tab5:
-    worst = suppliers.iloc[0]
     st.subheader("Which suppliers can we rely on?")
-    st.write(f"**{worst.supplier_name}** delivers on time only **{worst.on_time_pct:.0f}%** of the time, "
-             f"averaging {worst.avg_days_late:.1f} days late. Its products need extra safety stock.")
+    if suppliers.empty:
+        st.info("No purchase history, so suppliers can't be scored. Add a **purchases** sheet with the "
+                "order date and receipt date of each delivery. Until then, reorder points use the "
+                "promised lead times.")
+    else:
+        worst = suppliers.iloc[0]
+        st.write(f"**{worst.supplier_name}** delivers on time only **{worst.on_time_pct:.0f}%** of the time, "
+                 f"averaging {worst.avg_days_late:.1f} days late. Its products need extra safety stock.")
     st.dataframe(suppliers.drop(columns="supplier_id").rename(columns={
         "supplier_name": "Supplier", "deliveries": "Deliveries", "avg_promised_days": "Promised (days)",
         "avg_actual_days": "Actual (days)", "avg_days_late": "Avg days late", "on_time_pct": "On time %"}),
@@ -249,31 +333,38 @@ with tab6:
     st.write("Each row simulates a full year of daily orders, 300 times, using real demand patterns and "
              "real supplier delays from the data. A higher target means fewer stockouts but more money "
              "tied up in stock.")
-    sim = what_if()
-    view = pd.DataFrame({
-        "Target": (sim.target_service_level * 100).round(0).astype(int).astype(str) + "%",
-        "Demand met from stock": (sim.fill_rate * 100).round(1).astype(str) + "%",
-        "Stockout days per product per year": sim.stockout_days_per_product.round(1),
-        "Average stock value": sim.avg_stock_value_inr.apply(cfg.money),
-        "Yearly holding cost": sim.yearly_holding_cost_inr.apply(cfg.money),
-    })
-    st.dataframe(view, hide_index=True, width="stretch")
-    lo, hi = sim.iloc[1], sim.iloc[-1]
-    extra = hi.avg_stock_value_inr - lo.avg_stock_value_inr
-    st.write(f"Going from **{lo.target_service_level:.0%} to {hi.target_service_level:.0%}** adds "
-             f"**{m(extra)}** of average stock ({m(extra * cfg.HOLDING_RATE)} a year to hold) "
-             f"and lifts demand met from stock by **{(hi.fill_rate - lo.fill_rate) * 100:.1f} points**.")
-    fig = go.Figure(go.Scatter(
-        x=sim.avg_stock_value_inr / 1e5, y=sim.fill_rate * 100, mode="lines+markers+text",
-        text=[f"{v:.0%}" for v in sim.target_service_level], textposition="top left",
-        line=dict(color=BLUE, width=2), marker=dict(size=10, color=BLUE),
-        hovertemplate="Stock ₹%{x:.1f} lakh<br>Demand met %{y:.1f}%<extra></extra>"))
-    fig.update_xaxes(title="Average stock value (₹ lakh)")
-    fig.update_yaxes(title="Demand met from stock (%)",
-                     range=[sim.fill_rate.min() * 100 - 0.4, sim.fill_rate.max() * 100 + 0.4])
-    st.plotly_chart(style_fig(fig, 320), width="stretch")
-    st.caption("Targets are per order cycle. Demand met counts units (weighted by value), so it runs higher "
-               "than the target. Unmet demand is treated as a lost sale.")
+    sim_key = f"sim_{db_path}"
+    if uploaded and not st.session_state.get(sim_key):
+        st.info(f"This runs 1,200 simulated years for your {len(reorder)} products and can take up to a minute.")
+        if st.button("Run the simulation", type="primary"):
+            st.session_state[sim_key] = True
+            st.rerun()
+    else:
+        sim = what_if(db_path)
+        view = pd.DataFrame({
+            "Target": (sim.target_service_level * 100).round(0).astype(int).astype(str) + "%",
+            "Demand met from stock": (sim.fill_rate * 100).round(1).astype(str) + "%",
+            "Stockout days per product per year": sim.stockout_days_per_product.round(1),
+            "Average stock value": sim.avg_stock_value_inr.apply(cfg.money),
+            "Yearly holding cost": sim.yearly_holding_cost_inr.apply(cfg.money),
+        })
+        st.dataframe(view, hide_index=True, width="stretch")
+        lo, hi = sim.iloc[1], sim.iloc[-1]
+        extra = hi.avg_stock_value_inr - lo.avg_stock_value_inr
+        st.write(f"Going from **{lo.target_service_level:.0%} to {hi.target_service_level:.0%}** adds "
+                 f"**{m(extra)}** of average stock ({m(extra * cfg.HOLDING_RATE)} a year to hold) "
+                 f"and lifts demand met from stock by **{(hi.fill_rate - lo.fill_rate) * 100:.1f} points**.")
+        fig = go.Figure(go.Scatter(
+            x=sim.avg_stock_value_inr / 1e5, y=sim.fill_rate * 100, mode="lines+markers+text",
+            text=[f"{v:.0%}" for v in sim.target_service_level], textposition="top left",
+            line=dict(color=BLUE, width=2), marker=dict(size=10, color=BLUE),
+            hovertemplate="Stock ₹%{x:.1f} lakh<br>Demand met %{y:.1f}%<extra></extra>"))
+        fig.update_xaxes(title="Average stock value (₹ lakh)")
+        fig.update_yaxes(title="Demand met from stock (%)",
+                         range=[sim.fill_rate.min() * 100 - 0.4, sim.fill_rate.max() * 100 + 0.4])
+        st.plotly_chart(style_fig(fig, 320), width="stretch")
+        st.caption("Targets are per order cycle. Demand met counts units (weighted by value), so it runs higher "
+                   "than the target. Unmet demand is treated as a lost sale.")
 
 # ---------------------------------------------------------------------------
 # 7. Real data case study (UCI Online Retail II)

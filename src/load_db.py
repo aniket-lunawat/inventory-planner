@@ -54,19 +54,27 @@ def check(con):
         print(f"  check - {label}: {n}" + ("  <-- look at this" if n else ""))
 
 
+def build_db(frames: dict, path) -> None:
+    """Create a fresh database at `path` from one DataFrame per table (already cleaned)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path)
+    con.executescript((SQL_DIR / "schema.sql").read_text(encoding="utf-8"))
+    for t in TABLES:
+        frames[t].to_sql(t, con, if_exists="append", index=False)
+    con.commit()
+    con.close()
+
+
 def main():
     src, label = pick_source()
     print(f"Loading {label} from {src}")
-    DB_PATH.parent.mkdir(exist_ok=True)
-    con = sqlite3.connect(DB_PATH)
-    con.executescript((SQL_DIR / "schema.sql").read_text(encoding="utf-8"))
+    frames = {}
     for t in TABLES:
-        df = clean(t, pd.read_csv(src / f"{t}.csv"))
-        df.to_sql(t, con, if_exists="append", index=False)
-        print(f"  {t}: {len(df)} rows")
-    check(con)
-    con.commit()
-    con.close()
+        frames[t] = clean(t, pd.read_csv(src / f"{t}.csv"))
+        print(f"  {t}: {len(frames[t])} rows")
+    build_db(frames, DB_PATH)
+    with sqlite3.connect(DB_PATH) as con:
+        check(con)
     print(f"Database ready: {DB_PATH}")
 
 

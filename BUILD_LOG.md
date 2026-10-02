@@ -38,6 +38,20 @@ Short notes after every session: what I did, what I decided, and why.
 - Fixed a display bug: two "$" signs in one line rendered as a maths formula in Streamlit.
 - 7 pytest tests. README with screenshots, one-page case study in docs/.
 
+## 2026-10-02 - anyone can upload their own data
+- Sidebar option "My own data (upload)": blank Excel template, an example file, and an uploader.
+- Only products, sales and stock are required. Without purchases the tool falls back to promised
+  lead times and skips the supplier scorecard instead of crashing.
+- Upload checks (src/upload.py): errors stop the upload (missing sheet or column, under 3 months of
+  sales); warnings skip bad rows and say how many (returns, unknown products, bad dates).
+  - Decision: accept common header names (SKU, Qty, Price) and turn Excel's 1001.0 back into 1001,
+    because real exports never match a template exactly.
+  - Decision: sales invoice_no is no longer the primary key. Real invoices have several lines.
+- Each upload gets its own temporary SQLite file, and the active database is stored per visitor
+  (thread), so two people uploading at once never see each other's data.
+- Short histories: the backtest tests fewer months, and seasonality is only used with 12+ months.
+- 3 new tests (10 total). Tested in a browser with a second made-up company (bike parts).
+
 ## Next
 - Go through every SQL query and be able to explain it without notes.
 - Put it on GitHub, then online (Streamlit Community Cloud).
