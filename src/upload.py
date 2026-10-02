@@ -45,17 +45,17 @@ HELP = {
     "products": {
         "product_id": ("Your code for the item (SKU)", "P01"),
         "product_name": ("Name of the item", "AC Electromagnetic Yoke"),
-        "unit_cost_inr": ("What one unit costs you to make or buy", 14500),
+        "unit_cost_inr": ("What one unit costs you to make or buy", 175.00),
         "lead_time_days": ("Days the supplier promises from order to delivery", 21),
         "category": ("Product group (optional)", "Yokes"),
-        "unit_price_inr": ("List selling price (optional; else taken from sales)", 22500),
+        "unit_price_inr": ("List selling price (optional; else taken from sales)", 271.00),
         "supplier_id": ("Who supplies it (optional; matches the suppliers sheet)", "S1"),
     },
     "sales": {
         "order_date": ("Date of the sale (YYYY-MM-DD)", "2026-08-14"),
         "product_id": ("Item sold (matches the products sheet)", "P01"),
         "quantity": ("Units sold on that line", 5),
-        "unit_price_inr": ("Price per unit on that line", 21000),
+        "unit_price_inr": ("Price per unit on that line", 253.00),
         "invoice_no": ("Invoice number (optional)", "INV-1001"),
         "customer_id": ("Customer (optional)", "C01"),
     },
@@ -75,7 +75,7 @@ HELP = {
         "product_id": ("Item received", "P01"),
         "quantity": ("Units received", 20),
         "supplier_id": ("Supplier (optional; else from products)", "S1"),
-        "unit_cost_inr": ("Cost per unit (optional)", 14200),
+        "unit_cost_inr": ("Cost per unit (optional)", 171.00),
     },
     "customers": {
         "customer_id": ("Customer code", "C01"),
@@ -107,6 +107,11 @@ MIN_HISTORY_DAYS = 90
 DEFAULT_LEAD_TIME = 14
 
 
+def _shown(col: str) -> str:
+    """Column name as people see it: the database adds '_inr', but uploads can be in any currency."""
+    return col.replace("_inr", "")
+
+
 # ---------------------------------------------------------------------------
 # Template
 # ---------------------------------------------------------------------------
@@ -120,7 +125,7 @@ def template_xlsx() -> bytes:
         need = "Required" if table in REQUIRED_SHEETS else "Optional"
         for col in req + opt:
             readme.append({"Sheet": table, "Sheet needed?": need,
-                           "Column": col, "Column needed?": "Required" if col in req else "Optional",
+                           "Column": _shown(col), "Column needed?": "Required" if col in req else "Optional",
                            "What to put in it": HELP[table][col][0], "Example": HELP[table][col][1]})
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
@@ -129,7 +134,7 @@ def template_xlsx() -> bytes:
             "2. Keep the column names in row 1 exactly as they are. Delete the example row in each sheet.",
             "3. Dates as YYYY-MM-DD. At least 3 months of sales; 12 months or more gives a seasonal forecast.",
             "4. Every product_id in sales, stock and purchases must also be in products.",
-            "5. Amounts can be in any one currency; the dashboard labels them as rupees.",
+            "5. Amounts in US dollars or Indian rupees (pick which in the sidebar when you upload). Use one currency throughout.",
             "6. Save, then upload this file in the dashboard sidebar. Nothing is stored after you close the page.",
             "",
             "Column guide:"]})
@@ -137,7 +142,7 @@ def template_xlsx() -> bytes:
         pd.DataFrame(readme).to_excel(xw, sheet_name="Read me", index=False, startrow=len(intro) + 2)
         for table in ["products", "sales", "stock", "suppliers", "purchases", "customers"]:
             req, opt = COLUMNS[table]
-            pd.DataFrame([{c: HELP[table][c][1] for c in req + opt}]).to_excel(xw, sheet_name=table, index=False)
+            pd.DataFrame([{_shown(c): HELP[table][c][1] for c in req + opt}]).to_excel(xw, sheet_name=table, index=False)
 
         wb = xw.book
         bold, req_fill = Font(bold=True), PatternFill("solid", fgColor="DCE9F9")
@@ -152,7 +157,7 @@ def template_xlsx() -> bytes:
             req = COLUMNS[table][0]
             for cell in ws[1]:
                 cell.font = bold
-                if cell.value in req:
+                if cell.value in [_shown(c) for c in req]:
                     cell.fill = req_fill
                 ws.column_dimensions[cell.column_letter].width = max(14, len(str(cell.value)) + 4)
     return buf.getvalue()
@@ -227,7 +232,7 @@ def validate(raw: dict) -> tuple[dict | None, list, list, dict]:
         df = df.dropna(how="all")
         missing = [c for c in req if c not in df.columns]
         if missing:
-            errors.append(f"The **{table}** sheet is missing column(s): {', '.join(missing)}. "
+            errors.append(f"The **{table}** sheet is missing column(s): {', '.join(map(_shown, missing))}. "
                           f"It has: {', '.join(map(str, df.columns))}.")
             continue
         t[table] = df[[c for c in req + opt if c in df.columns]].copy()

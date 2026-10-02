@@ -8,8 +8,10 @@ SAMPLE_DIR = ROOT / "sample_data"        # made-up data for the public repo
 DB_PATH = ROOT / "data" / "inventory.db"  # SQLite database
 SQL_DIR = ROOT / "sql"
 
-# Money: every amount is stored in rupees. USD is shown next to it.
-INR_PER_USD = 83.0  # update this one number when the rate changes
+# Money. The simulated company's amounts are stored in rupees; uploads can be in
+# dollars or rupees. The dashboard shows US dollars by default (rupees on request).
+INR_PER_USD = 83.0   # update this one number when the rate changes
+USD_PER_GBP = 1.58   # the UK case study (2009-2011) converted at roughly that period's average rate
 
 # Inventory rules
 DEMAND_WINDOW_DAYS = 90   # average demand is measured over the last 90 days
@@ -22,6 +24,20 @@ MAKE_TO_ORDER_BELOW = 1   # sells under 1 unit/month = build to order, don't sto
 ORDER_COST_INR = 1500     # cost of placing one purchase order (admin, freight, receiving)
 HOLDING_RATE = 0.25       # yearly cost of holding stock, as a share of its value
 ON_TIME_GRACE_DAYS = 2    # a delivery up to 2 days late still counts as on time
+
+
+def fmt(amount: float, currency: str) -> str:
+    """'$12,345' for USD, '₹1,23,456' (Indian grouping) for INR."""
+    if currency == "INR":
+        return inr_fmt(amount)
+    return f"-${abs(amount):,.0f}" if amount < 0 else f"${amount:,.0f}"
+
+
+def convert(amount, from_ccy: str, to_ccy: str):
+    """Convert between USD and INR at INR_PER_USD (works on numbers and pandas columns)."""
+    if from_ccy == to_ccy:
+        return amount
+    return amount / INR_PER_USD if from_ccy == "INR" else amount * INR_PER_USD
 
 
 def money(inr: float) -> str:

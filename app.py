@@ -46,6 +46,8 @@ def check_upload(files):
 
 EXAMPLE = cfg.SAMPLE_DIR / "example_upload.xlsx"
 with st.sidebar:
+    show_label = st.radio("Show money in", ["US dollars ($)", "Indian rupees (₹)"], horizontal=True)
+    SHOW = "USD" if show_label.startswith("US") else "INR"
     st.header("Data")
     mode = st.radio("Show results for", ["Sample company (simulated)", "My own data (upload)"],
                     label_visibility="collapsed")
@@ -59,12 +61,14 @@ with st.sidebar:
                            "example_bike_parts_distributor.xlsx", width="stretch",
                            help="A made-up bicycle parts distributor, already in the right format.")
         st.markdown("**2. Upload it.** One Excel file, or CSVs named products.csv, sales.csv and so on.")
+        file_ccy_label = st.radio("Amounts in my file are in", ["US dollars", "Indian rupees"], horizontal=True)
         up = st.file_uploader("Upload", type=["xlsx", "csv"], accept_multiple_files=True,
                               label_visibility="collapsed")
         files = [(f.name, f.getvalue()) for f in up or []]
         st.caption("Your file is only used to draw this page. It is not kept, and other visitors can't see it.")
 
 db_path, upload_warnings, upload_summary = None, [], {}
+data_ccy = "INR"   # the simulated company's amounts are stored in rupees
 if mode.startswith("My own"):
     if not files:
         st.title("Inventory Planner")
@@ -80,12 +84,13 @@ if mode.startswith("My own"):
         for w in upload_warnings:
             st.warning(w)
         st.stop()
-an.use_db(db_path)   # None = the simulated company
+    data_ccy = "USD" if file_ccy_label == "US dollars" else "INR"
+an.use_db(db_path, data_ccy)   # None = the simulated company
 
 
 @st.cache_data(show_spinner="Crunching the numbers...")
-def load(db):
-    an.use_db(db)
+def load(db, ccy):
+    an.use_db(db, ccy)
     if db is None and not cfg.DB_PATH.exists():
         import load_db
         load_db.main()
@@ -95,12 +100,12 @@ def load(db):
 
 
 @st.cache_data(show_spinner="Simulating a year of orders, 300 times per service level...")
-def what_if(db):
-    an.use_db(db)
+def what_if(db, ccy):
+    an.use_db(db, ccy)
     return supply.simulate_service_levels()
 
 
-abc, monthly, idle, reorder, fc, acc, today, suppliers, turns = load(db_path)
+abc, monthly, idle, reorder, fc, acc, today, suppliers, turns = load(db_path, data_ccy)
 using_real = all((cfg.RAW_DIR / f"{t}.csv").exists() for t in ["sales", "products", "stock"])
 uploaded = db_path is not None
 
@@ -109,13 +114,22 @@ def pct(v):
     return "n/a" if v is None else f"{v:.0%}"
 
 
-def usd(inr):
-    return f"≈\\${inr / cfg.INR_PER_USD:,.0f}"
+def money(v):
+    """An amount from the data, converted to the chosen display currency and formatted."""
+    return cfg.fmt(cfg.convert(v, data_ccy, SHOW), SHOW)
 
 
-def m(inr):
+def m(v):
     """Money for text shown as Markdown: '$' is escaped, or two of them would render as maths."""
-    return cfg.money(inr).replace("$", "\\$")
+    return money(v).replace("$", "\\$")
+
+
+# charts: dollars in thousands, rupees in lakh (1 lakh = 100,000)
+SCALE, SCALE_LABEL = (1e3, "$ thousand") if SHOW == "USD" else (1e5, "₹ lakh")
+
+
+def scaled(v):
+    return cfg.convert(v, data_ccy, SHOW) / SCALE
 
 
 def style_fig(fig, height=340):
@@ -133,12 +147,16 @@ def style_fig(fig, height=340):
 # Header + headline numbers
 # ---------------------------------------------------------------------------
 st.title("Inventory Planner")
-st.caption(f"Stock as of {today:%d %b %Y}. Money in rupees, with US dollars at ₹{cfg.INR_PER_USD:.0f} = $1.")
+if SHOW == data_ccy:
+    st.caption(f"Stock as of {today:%d %b %Y}. Money in {'US dollars' if SHOW == 'USD' else 'rupees'}.")
+else:
+    st.caption(f"Stock as of {today:%d %b %Y}. Money in {'US dollars' if SHOW == 'USD' else 'rupees'}, "
+               f"converted at ₹{cfg.INR_PER_USD:.0f} = \\$1.")
 if uploaded:
     u = upload_summary
     st.success(f"**Your data:** {u['products']} products, {u['sales_rows']:,} sales lines from "
                f"{u['first_sale']:%d %b %Y} to {u['last_sale']:%d %b %Y}, {u['purchases']:,} deliveries. "
-               "Amounts are shown with the ₹ sign whatever currency you used.")
+               f"Amounts read as {'US dollars' if data_ccy == 'USD' else 'Indian rupees'} (change this in the sidebar).")
     if upload_warnings:
         with st.expander(f"{len(upload_warnings)} thing(s) to check in your data"):
             for w in upload_warnings:
@@ -153,14 +171,13 @@ rev12 = abc.revenue_inr.sum()
 
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    st.metric("Sales, last 12 months", cfg.inr_fmt(rev12))
-    st.caption(usd(rev12))
+    st.metric("Sales, last 12 months", money(rev12))
 with k2:
     st.metric("Products to reorder now", f"{len(order_now)}")
     st.caption(f"Order worth {m(order_now.suggested_order_value_inr.sum())}")
 with k3:
-    st.metric("Money stuck in slow stock", cfg.inr_fmt(stuck))
-    st.caption(f"{usd(stuck)} · idle or more than {cfg.OVERSTOCK_MONTHS} months of stock")
+    st.metric("Money stuck in slow stock", money(stuck))
+    st.caption(f"Idle, or more than {cfg.OVERSTOCK_MONTHS} months of stock")
 with k4:
     if acc["wape"] is None:
         st.metric("Forecast accuracy", "n/a")
@@ -183,7 +200,7 @@ with tab1:
     show = reorder.copy()
     show["Status"] = show.status.map(STATUS_ICON)
     show["Days of stock left"] = show.days_of_cover.apply(lambda d: "—" if d == float("inf") else f"{d:.0f}")
-    show["Order value"] = show.suggested_order_value_inr.apply(lambda v: cfg.money(v) if v else "")
+    show["Order value"] = show.suggested_order_value_inr.apply(lambda v: money(v) if v else "")
     show["suggested_order_units"] = show.suggested_order_units.apply(lambda q: str(q) if q else "")
     show["Actual lead time (days)"] = show.lt_mean.round(0).astype(int)
     table = show[["Status", "product_name", "on_hand_units", "reorder_point", "Days of stock left",
@@ -207,7 +224,7 @@ with tab1:
 - **Lead time** = how long the supplier *actually* took on past orders, not what they promised.
 - **Safety stock** = Z × √(lead time × demand variation² + demand² × lead time variation²). It covers busy weeks *and* late suppliers. Z = {cfg.SERVICE_LEVEL_Z} gives about 95% protection per order cycle.
 - **Reorder point** = average daily demand × actual lead time + safety stock.
-- **Order quantity (EOQ)** = √(2 × yearly demand × ₹{cfg.ORDER_COST_INR:,} per order ÷ yearly holding cost per unit), with holding cost at {cfg.HOLDING_RATE:.0%} of the item's value a year.
+- **Order quantity (EOQ)** = √(2 × yearly demand × {m(supply.order_cost())} per order ÷ yearly holding cost per unit), with holding cost at {cfg.HOLDING_RATE:.0%} of the item's value a year.
 - Products selling under {cfg.MAKE_TO_ORDER_BELOW} unit a month (big machines) are **made to order**, not stocked.
 - **Overstock** = more than {cfg.OVERSTOCK_MONTHS} months of stock on the shelf.
 """)
@@ -220,11 +237,11 @@ with tab2:
     tot = tot[tot.month < today.to_period("M").to_timestamp()]  # full months only
     st.subheader("Sales each month")
     fig = go.Figure(go.Bar(
-        x=tot.month, y=tot.revenue_inr / 1e5, marker_color=BLUE,
+        x=tot.month, y=scaled(tot.revenue_inr), marker_color=BLUE,
         marker=dict(cornerradius=4),
-        customdata=[[cfg.money(v)] for v in tot.revenue_inr],
+        customdata=[[money(v)] for v in tot.revenue_inr],
         hovertemplate="%{x|%b %Y}<br>%{customdata[0]}<extra></extra>"))
-    fig.update_yaxes(title="₹ lakh")
+    fig.update_yaxes(title=SCALE_LABEL)
     fig.update_xaxes(dtick="M2", tickformat="%b %y")
     st.plotly_chart(style_fig(fig), width="stretch")
     best, worst = tot.loc[tot.revenue_inr.idxmax()], tot.loc[tot.revenue_inr.idxmin()]
@@ -239,12 +256,12 @@ with tab2:
     colours = {"A": BLUE, "B": ORANGE, "C": AQUA}
     top = abc.sort_values("revenue_inr")
     fig = go.Figure(go.Bar(
-        y=top.product_name, x=top.revenue_inr / 1e5, orientation="h",
+        y=top.product_name, x=scaled(top.revenue_inr), orientation="h",
         marker=dict(color=top.abc_class.map(colours), cornerradius=4),
         text=top.abc_class, textposition="outside", textfont=dict(color=INK2),
-        customdata=[[cfg.money(v), c] for v, c in zip(top.revenue_inr, top.abc_class)],
+        customdata=[[money(v), c] for v, c in zip(top.revenue_inr, top.abc_class)],
         hovertemplate="%{y}<br>%{customdata[0]}<br>Class %{customdata[1]}<extra></extra>"))
-    fig.update_xaxes(title="₹ lakh")
+    fig.update_xaxes(title=SCALE_LABEL)
     st.plotly_chart(style_fig(fig, height=620), width="stretch")
     st.caption("A = top products making up 80% of sales · B = next 15% · C = last 5%")
 
@@ -275,7 +292,7 @@ with tab4:
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(f"**No sale in {cfg.IDLE_DAYS}+ days** · {m(idle.stock_value_inr.sum())}")
-        st.dataframe(idle.assign(Value=idle.stock_value_inr.apply(cfg.money))[
+        st.dataframe(idle.assign(Value=idle.stock_value_inr.apply(money))[
             ["product_name", "on_hand_units", "Value", "days_since_last_sale"]].rename(columns={
                 "product_name": "Product", "on_hand_units": "In stock",
                 "days_since_last_sale": "Days since last sale"}),
@@ -284,7 +301,7 @@ with tab4:
     with c2:
         st.markdown(f"**More than {cfg.OVERSTOCK_MONTHS} months of stock** · "
                     f"{m(over.stock_value_inr.sum())}")
-        st.dataframe(over.assign(Value=over.stock_value_inr.apply(cfg.money),
+        st.dataframe(over.assign(Value=over.stock_value_inr.apply(money),
                                  Months=(over.days_of_cover / 30).round(0).astype(int))[
             ["product_name", "on_hand_units", "Months", "Value"]].rename(columns={
                 "product_name": "Product", "on_hand_units": "In stock", "Months": "Months of stock"}),
@@ -316,8 +333,8 @@ with tab5:
     st.write(f"Overall, stock turns over **{all_row.turnover:.1f} times a year**, about "
              f"**{all_row.days_of_inventory:.0f} days** of inventory on the shelf.")
     st.dataframe(turns.assign(
-        **{"Cost of goods sold (12 mo)": turns.annual_cogs_inr.apply(cfg.money),
-           "Stock value": turns.stock_value_inr.apply(cfg.money)})[
+        **{"Cost of goods sold (12 mo)": turns.annual_cogs_inr.apply(money),
+           "Stock value": turns.stock_value_inr.apply(money)})[
         ["category", "Cost of goods sold (12 mo)", "Stock value", "turnover", "days_of_inventory"]].rename(columns={
             "category": "Category", "turnover": "Turns a year", "days_of_inventory": "Days of inventory"}),
         hide_index=True, width="stretch",
@@ -340,13 +357,13 @@ with tab6:
             st.session_state[sim_key] = True
             st.rerun()
     else:
-        sim = what_if(db_path)
+        sim = what_if(db_path, data_ccy)
         view = pd.DataFrame({
             "Target": (sim.target_service_level * 100).round(0).astype(int).astype(str) + "%",
             "Demand met from stock": (sim.fill_rate * 100).round(1).astype(str) + "%",
             "Stockout days per product per year": sim.stockout_days_per_product.round(1),
-            "Average stock value": sim.avg_stock_value_inr.apply(cfg.money),
-            "Yearly holding cost": sim.yearly_holding_cost_inr.apply(cfg.money),
+            "Average stock value": sim.avg_stock_value_inr.apply(money),
+            "Yearly holding cost": sim.yearly_holding_cost_inr.apply(money),
         })
         st.dataframe(view, hide_index=True, width="stretch")
         lo, hi = sim.iloc[1], sim.iloc[-1]
@@ -355,11 +372,11 @@ with tab6:
                  f"**{m(extra)}** of average stock ({m(extra * cfg.HOLDING_RATE)} a year to hold) "
                  f"and lifts demand met from stock by **{(hi.fill_rate - lo.fill_rate) * 100:.1f} points**.")
         fig = go.Figure(go.Scatter(
-            x=sim.avg_stock_value_inr / 1e5, y=sim.fill_rate * 100, mode="lines+markers+text",
+            x=scaled(sim.avg_stock_value_inr), y=sim.fill_rate * 100, mode="lines+markers+text",
             text=[f"{v:.0%}" for v in sim.target_service_level], textposition="top left",
             line=dict(color=BLUE, width=2), marker=dict(size=10, color=BLUE),
-            hovertemplate="Stock ₹%{x:.1f} lakh<br>Demand met %{y:.1f}%<extra></extra>"))
-        fig.update_xaxes(title="Average stock value (₹ lakh)")
+            hovertemplate=f"Stock %{{x:.1f}} ({SCALE_LABEL})<br>Demand met %{{y:.1f}}%<extra></extra>"))
+        fig.update_xaxes(title=f"Average stock value ({SCALE_LABEL})")
         fig.update_yaxes(title="Demand met from stock (%)",
                          range=[sim.fill_rate.min() * 100 - 0.4, sim.fill_rate.max() * 100 + 0.4])
         st.plotly_chart(style_fig(fig, 320), width="stretch")
@@ -375,14 +392,21 @@ def real():
 
 
 def gbp(v):
-    return f"£{v:,.0f}"
+    """UK amounts are in pounds; shown in US dollars at a fixed 2010-2011 rate."""
+    return f"${v * cfg.USD_PER_GBP:,.0f}"
+
+
+def gbp_md(v):
+    """The same, for Markdown text (escaped '$')."""
+    return gbp(v).replace("$", "\\$")
 
 
 with tab7:
     st.subheader("The same methods on real data: a UK online gift wholesaler")
     st.write("Real transactions from 2 years (Dec 2009 to Dec 2011) of a UK online wholesaler selling gifts "
              "and homeware, mostly to other businesses. Public dataset: *Online Retail II*, UCI Machine "
-             "Learning Repository. Money in pounds.")
+             "Learning Repository. Amounts converted from pounds to US dollars at £1 = \\$"
+             f"{cfg.USD_PER_GBP}, roughly the 2010 to 2011 average.")
     if not rd.results_available():
         st.warning("The real dataset isn't loaded yet. Run `python src/real_data.py` once "
                    "(downloads about 45 MB and takes 2 to 3 minutes).")
@@ -408,13 +432,13 @@ with tab7:
 
         st.markdown("#### 2. Sales each month")
         full = rm[rm.month < "2011-12-01"]
-        fig = go.Figure(go.Bar(x=full.month, y=full.revenue_gbp / 1e3, marker=dict(color=BLUE, cornerradius=4),
-                               hovertemplate="%{x|%b %Y}<br>£%{y:,.0f}k<extra></extra>"))
-        fig.update_yaxes(title="£ thousand")
+        fig = go.Figure(go.Bar(x=full.month, y=full.revenue_gbp * cfg.USD_PER_GBP / 1e3, marker=dict(color=BLUE, cornerradius=4),
+                               hovertemplate="%{x|%b %Y}<br>$%{y:,.0f}k<extra></extra>"))
+        fig.update_yaxes(title="$ thousand")
         fig.update_xaxes(dtick="M2", tickformat="%b %y")
         st.plotly_chart(style_fig(fig, 300), width="stretch")
         peak = full.loc[full.revenue_gbp.idxmax()]
-        st.caption(f"Strong pre-Christmas season: the peak was {peak.month:%B %Y} at {gbp(peak.revenue_gbp)}. "
+        st.caption(f"Strong pre-Christmas season: the peak was {peak.month:%B %Y} at {gbp_md(peak.revenue_gbp)}. "
                    "December 2011 is left out because the data stops on the 9th.")
 
         st.markdown("#### 3. ABC-XYZ: where planning effort pays off")

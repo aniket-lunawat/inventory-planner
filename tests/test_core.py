@@ -136,3 +136,24 @@ def test_uploaded_data_is_analysed_without_touching_the_sample(tmp_path, monkeyp
     finally:
         an.use_db(None)
     assert len(supply.planning_table()) == 24                  # sample company unchanged
+
+
+# ---------------------------------------------------------------------------
+# Currency: dollars by default, rupees on request
+# ---------------------------------------------------------------------------
+def test_money_formats_and_conversion():
+    assert cfg.fmt(424613.4, "USD") == "$424,613"
+    assert cfg.fmt(35242910, "INR") == "₹3,52,42,910"
+    assert cfg.convert(8300, "INR", "USD") == pytest.approx(100)
+    assert cfg.convert(100, "USD", "INR") == pytest.approx(8300)
+
+
+def test_order_quantity_does_not_depend_on_currency():
+    import analysis as an
+    in_rupees = supply.eoq(1000, 1200)
+    an.use_db(None, "USD")
+    try:
+        in_dollars = supply.eoq(1000, 1200 / cfg.INR_PER_USD)   # same item priced in dollars
+    finally:
+        an.use_db(None)
+    assert in_dollars == pytest.approx(in_rupees)

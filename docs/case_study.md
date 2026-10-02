@@ -21,11 +21,11 @@ Real company data was not available, so I built a simulated company modeled on a
 
 | Finding | Number |
 |---|---|
-| Products to reorder now | 9 of 24, order worth ₹7.5 lakh |
-| Money in idle or overstocked items | ₹24.7 lakh (≈$29.7k) |
+| Products to reorder now | 9 of 24, order worth $9.0k (₹7.5 lakh) |
+| Money in idle or overstocked items | $29.7k (₹24.7 lakh) |
 | Least reliable supplier | on time 36% of deliveries, 8.5 days late on average |
 | Inventory turnover | 3.8 turns a year (96 days); yokes slowest at 133 days |
-| Cost of raising service level from 95% to 99% | +₹5.0 lakh average stock (+₹1.2 lakh a year to hold) for +1.2 points of demand met |
+| Cost of raising service level from 95% to 99% | +$6.0k average stock (+$1.5k a year to hold) for +1.2 points of demand met |
 | Forecast error, last 6 months | 13%, against 25% for "same as last month" |
 
 ## Findings (real UK wholesaler)
@@ -43,9 +43,9 @@ Real company data was not available, so I built a simulated company modeled on a
 ## Recommendations
 
 1. **Order the 9 flagged products now**, starting with the aerosols, which have under a week of stock left.
-2. **Clear idle stock** (₹3.6 lakh with no sale in 6 months) through discounts to regular customers or bundles, and pause production of the overstocked AC yoke (6 months of stock).
+2. **Clear idle stock** ($4.4k with no sale in 6 months) through discounts to regular customers or bundles, and pause production of the overstocked AC yoke (6 months of stock).
 3. **Hold extra safety stock for the importer's products**, or find a second source. Its delays, not demand, drive most of the stockout risk on those items.
-4. **Target 95% service** for most products. Going to 99% costs about ₹1.2 lakh a year in holding cost for a small gain; reserve it for the products that matter most (the AX group).
+4. **Target 95% service** for most products. Going to 99% costs about $1.5k a year in holding cost for a small gain; reserve it for the products that matter most (the AX group).
 5. **Forecast at two levels.** Use the seasonal model for total volume (cash, staffing, capacity) and a simple average plus safety stock for individual products. Single-product demand is too noisy for seasonality to help.
 
 ## Limitations

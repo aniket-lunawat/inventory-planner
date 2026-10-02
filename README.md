@@ -18,7 +18,9 @@ Open the [live demo](https://inventory-planner-aniket.streamlit.app), choose **M
 
 1. Download the blank Excel template (or the ready-made example, a bicycle parts distributor).
 2. Fill in 3 sheets: **products**, **sales** and **stock**. **purchases** and **suppliers** are optional; with purchase order and receipt dates the tool also scores suppliers and uses actual lead times.
-3. Upload it. Every tab recalculates for your business.
+3. Pick whether your amounts are in US dollars or rupees, and upload it. Every tab recalculates for your business.
+
+Money is shown in US dollars by default (the simulated company is converted at ₹83 = $1, the UK data at £1 = $1.58); a sidebar switch shows rupees instead.
 
 The upload is checked first, with plain-English messages: missing sheets or columns, too little history (under 3 months), sales for unknown products, returns, bad dates. Common column names (SKU, Qty, Price, Date) are recognised, and Excel number IDs like 1001.0 are matched to 1001. Each upload gets its own temporary database, so visitors never see each other's data.
 
@@ -35,9 +37,9 @@ All numbers for the manufacturer are simulated. None are real company figures.
 ## Key findings
 
 **Simulated manufacturer**
-- 9 products are at or below their reorder point. ₹24.7 lakh (≈$29.7k) sits in idle or overstocked items.
+- 9 products are at or below their reorder point. $29.7k (₹24.7 lakh) sits in idle or overstocked items.
 - The instruments importer delivers on time only 36% of the time and averages 8.5 days late, so its products need extra safety stock. Using the *promised* lead time would underestimate how much.
-- Raising the service level from 95% to 99% adds ₹5.0 lakh of average stock (₹1.2 lakh a year to hold) for 1.2 points more demand met from stock.
+- Raising the service level from 95% to 99% adds $6.0k of average stock ($1.5k a year to hold) for 1.2 points more demand met from stock.
 - Stock turns over 3.8 times a year (96 days of inventory). Yokes are the slowest category at 133 days.
 - The seasonal forecast is off by 13% over the last 6 months, against 25% for "same as last month".
 

@@ -52,6 +52,16 @@ Short notes after every session: what I did, what I decided, and why.
 - Short histories: the backtest tests fewer months, and seasonality is only used with 12+ months.
 - 3 new tests (10 total). Tested in a browser with a second made-up company (bike parts).
 
+## 2026-10-02 - money in US dollars
+- The dashboard shows US dollars by default, with a sidebar switch to rupees.
+  - The simulated company is still stored in rupees and converted at one rate (config.INR_PER_USD).
+  - The UK case study is converted from pounds at about the 2010-2011 average (config.USD_PER_GBP).
+  - Uploads: the visitor says whether their file is in dollars or rupees (default dollars).
+- Decision: the order cost (Rs 1,500, about $18) is converted into the data's currency, so EOQ comes
+  out the same whichever currency the data is in. A test checks this.
+- Template columns are now unit_cost and unit_price (no "_inr"); old names still work.
+- Example file and test companies saved in dollars. 12 tests.
+
 ## Next
 - Go through every SQL query and be able to explain it without notes.
 - Put it on GitHub, then online (Streamlit Community Cloud).

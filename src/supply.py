@@ -63,7 +63,12 @@ def eoq(annual_units, unit_cost):
         EOQ = sqrt( 2 x annual demand x cost per order / yearly holding cost per unit )
     """
     h = cfg.HOLDING_RATE * unit_cost
-    return np.sqrt(2 * annual_units * cfg.ORDER_COST_INR / h)
+    return np.sqrt(2 * annual_units * order_cost() / h)
+
+
+def order_cost() -> float:
+    """Cost of one purchase order, in the active data's currency (₹1,500, or about $18)."""
+    return cfg.convert(cfg.ORDER_COST_INR, "INR", an.data_currency())
 
 
 def planning_table(z: float = cfg.SERVICE_LEVEL_Z) -> pd.DataFrame:

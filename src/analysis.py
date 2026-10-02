@@ -30,9 +30,15 @@ import config as cfg
 _active = threading.local()
 
 
-def use_db(path=None) -> None:
-    """Point every query at this database (None = the default one)."""
+def use_db(path=None, currency: str = "INR") -> None:
+    """Point every query at this database (None = the default one), whose amounts are in `currency`."""
     _active.db = Path(path) if path else None
+    _active.currency = currency
+
+
+def data_currency() -> str:
+    """Currency the active database's amounts are in ("INR" or "USD")."""
+    return getattr(_active, "currency", "INR")
 
 
 def db_path() -> Path:

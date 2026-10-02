@@ -2,6 +2,9 @@
 Make a second, different made-up company to try the upload feature with:
 a small bicycle parts distributor. Saved as sample_data/example_upload.xlsx.
 
+Prices are set in rupees, then saved in US dollars (at config.INR_PER_USD),
+because the dashboard's upload defaults to dollars.
+
 It is deliberately a little messy (a few returns, a typo'd product code, no
 customers sheet) so the upload checks have something to report.
 
@@ -10,7 +13,7 @@ Run:  python src/make_example_upload.py
 import numpy as np
 import pandas as pd
 
-from config import SAMPLE_DIR
+from config import INR_PER_USD, SAMPLE_DIR
 
 rng = np.random.default_rng(7)
 START, TODAY = pd.Timestamp("2025-04-01"), pd.Timestamp("2026-09-30")
@@ -87,11 +90,19 @@ for p in products.itertuples():
                       "quantity": max(1, int(sold / n)), "unit_cost_inr": p.unit_cost_inr})
 purchases = pd.DataFrame(purch)
 
+def in_dollars(df: pd.DataFrame) -> pd.DataFrame:
+    """Rupee columns to dollars, and drop the '_inr' from their names."""
+    out = df.copy()
+    for c in [c for c in out if c.endswith("_inr")]:
+        out[c] = (out[c] / INR_PER_USD).round(2)
+    return out.rename(columns=lambda c: c.replace("_inr", ""))
+
+
 path = SAMPLE_DIR / "example_upload.xlsx"
 with pd.ExcelWriter(path, engine="openpyxl") as xw:
-    products.drop(columns="monthly").to_excel(xw, sheet_name="products", index=False)
-    sales.to_excel(xw, sheet_name="sales", index=False)
+    in_dollars(products.drop(columns="monthly")).to_excel(xw, sheet_name="products", index=False)
+    in_dollars(sales).to_excel(xw, sheet_name="sales", index=False)
     stock.to_excel(xw, sheet_name="stock", index=False)
     suppliers.to_excel(xw, sheet_name="suppliers", index=False)
-    purchases.to_excel(xw, sheet_name="purchases", index=False)
+    in_dollars(purchases).to_excel(xw, sheet_name="purchases", index=False)
 print(f"{len(products)} products, {len(sales):,} sales lines, {len(purchases)} purchases -> {path}")
