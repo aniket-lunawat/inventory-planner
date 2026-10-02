@@ -68,7 +68,8 @@ def eoq(annual_units, unit_cost):
 
 def order_cost() -> float:
     """Cost of one purchase order, in the active data's currency (₹1,500, or about $18)."""
-    return cfg.convert(cfg.ORDER_COST_INR, "INR", an.data_currency())
+    cur = an.data_currency()
+    return cfg.ORDER_COST_INR if cur == "INR" else cfg.ORDER_COST_INR / cfg.INR_PER_USD   # $, £ or €: about 18
 
 
 def planning_table(z: float = cfg.SERVICE_LEVEL_Z) -> pd.DataFrame:

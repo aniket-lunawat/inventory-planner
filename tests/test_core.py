@@ -1,4 +1,5 @@
 """Checks that the maths does what the README says. Run:  python -m pytest -q"""
+import io
 import sys
 from pathlib import Path
 
@@ -157,3 +158,57 @@ def test_order_quantity_does_not_depend_on_currency():
     finally:
         an.use_db(None)
     assert in_dollars == pytest.approx(in_rupees)
+
+
+# ---------------------------------------------------------------------------
+# Messy exports: read anything, clean with a reason for every removed row
+# ---------------------------------------------------------------------------
+import raw_import as ri  # noqa: E402
+
+
+def test_numbers_written_any_way():
+    s = pd.Series(["₹ 1,25,000.00", "$1,234", "(45.00)", "120-", "12 pcs", "Rs.450", "", "abc"])
+    got = ri.to_number(s).tolist()
+    assert got[:6] == [125000.0, 1234.0, -45.0, -120.0, 12.0, 450.0]
+    assert np.isnan(got[6]) and np.isnan(got[7])
+    assert ri.to_number(pd.Series(["1.234,56", "2.000,00"])).tolist() == [1234.56, 2000.0]   # European style
+
+
+def test_dates_written_any_way():
+    d = ri.to_date(pd.Series(["25/04/2025", "03/04/2025", "45000", "2025-04-01", "13/45/2025", "hello"]))
+    assert d[0] == pd.Timestamp("2025-04-25")          # day first, because 25 can't be a month
+    assert d[1] == pd.Timestamp("2025-04-03")
+    assert d[2] == pd.Timestamp("2023-03-15")          # an Excel serial number
+    assert d[3] == pd.Timestamp("2025-04-01")
+    assert pd.isna(d[4]) and pd.isna(d[5])
+
+
+def _ugly_export() -> bytes:
+    rows = [["Acme Traders Pvt Ltd", "", "", "", ""], ["Sales Register 2025", "", "", "", ""], ["", "", "", "", ""],
+            ["Vch Date", "Particulars", "Item", "Qty", "Value"]]
+    for i in range(120):
+        day = f"{(i % 28) + 1:02d}-{(i // 28) % 12 + 1:02d}-2025"
+        rows.append([day, "Shop A", " brake pad " if i % 5 == 0 else "Brake Pad", "4 Nos", "Rs. 1,000.00"])
+    rows += [["01-02-2025", "Shop A", "Output CGST 9%", "", "Rs. 90.00"],
+             ["02-02-2025", "Shop B", "Brake Pad", "-2", "(500.00)"],
+             ["", "", "Grand Total", "", "Rs. 1,20,000.00"]]
+    rows.append(rows[10])                                                  # a duplicate line
+    buf = io.BytesIO()
+    pd.DataFrame(rows).to_excel(buf, header=False, index=False)
+    return buf.getvalue()
+
+
+def test_ugly_export_is_read_cleaned_and_explained():
+    table, _ = ri.read_any([("register.xlsx", _ugly_export())])
+    assert list(table.columns) == ["Vch Date", "Particulars", "Item", "Qty", "Value"]   # header found under titles
+    roles = ri.guess_roles(table)
+    assert roles["date"] == "Vch Date" and roles["product_name"] == "Item" and roles["quantity"] == "Qty"
+    sales, returns, log, fixes = ri.clean(table, roles)
+    removed = dict(zip(log["Step"], log["Rows removed"]))
+    assert removed["Exact duplicates"] == 1
+    assert removed["Not products (tax, freight, fees, discounts)"] == 1
+    assert removed["Returns and cancellations"] == 1
+    assert sales["product"].nunique() == 1                 # ' brake pad ' and 'Brake Pad' are one product
+    assert len(sales) == 120 and sales["price"].eq(250).all()   # price worked out as value / qty
+    a = ri.analyse(sales, returns)
+    assert a["products"] == 1

@@ -62,6 +62,22 @@ Short notes after every session: what I did, what I decided, and why.
 - Template columns are now unit_cost and unit_price (no "_inr"); old names still work.
 - Example file and test companies saved in dollars. 12 tests.
 
+## 2026-10-02 - messy exports: the tool should work on any company's worst data
+- Tried the real UCI file exactly as published: the upload rejected it (no products/stock sheets, own column names,
+  1 million rows). Real exports never match a template, so I built a third data mode.
+- src/raw_import.py: reads any Excel/CSV/gzip/zip, finds the header row under title lines, guesses each column from
+  its name and contents (the user can correct any guess), parses any number/date format, and cleans in logged steps.
+  - Decision: never drop rows silently. Every step records rows removed, value removed, why, and examples.
+  - Decision: tax/freight/discount lines are removed BEFORE returns, because a discount line is negative but not a return.
+  - Decision: cancellations of mistaken bulk orders are removed from returns too, or they'd look like huge returns.
+  - Bugs found by tests: 'Rs.450' read as 0.45; ISO dates read day-first; 'dd-mm-yyyy' text taken for numbers.
+- Sales alone give: trend, ABC-XYZ, a backtested forecast, slowing/stopped products, returns, customers, clean CSV.
+- A pre-filled stock sheet (top 300 products) unlocks the full reorder dashboard.
+- Real file: 1,067,371 rows -> 1,003,039 clean lines; 830 of 3,759 products make 80% of sales (my hand-built
+  pipeline said 832). About 20 seconds; memory kept under 1.3 GB by storing repeated text as categories and
+  reading Excel one sheet at a time (the free host allows up to 2.7 GB).
+- 15 tests.
+
 ## Next
 - Go through every SQL query and be able to explain it without notes.
 - Put it on GitHub, then online (Streamlit Community Cloud).

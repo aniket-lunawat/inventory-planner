@@ -30,13 +30,14 @@ def fmt(amount: float, currency: str) -> str:
     """'$12,345' for USD, '₹1,23,456' (Indian grouping) for INR."""
     if currency == "INR":
         return inr_fmt(amount)
-    return f"-${abs(amount):,.0f}" if amount < 0 else f"${amount:,.0f}"
+    sym = {"GBP": "£", "EUR": "€"}.get(currency, "$")
+    return f"-{sym}{abs(amount):,.0f}" if amount < 0 else f"{sym}{amount:,.0f}"
 
 
 def convert(amount, from_ccy: str, to_ccy: str):
     """Convert between USD and INR at INR_PER_USD (works on numbers and pandas columns)."""
-    if from_ccy == to_ccy:
-        return amount
+    if {from_ccy, to_ccy} != {"INR", "USD"}:
+        return amount            # only dollars and rupees are converted; other currencies are shown as they are
     return amount / INR_PER_USD if from_ccy == "INR" else amount * INR_PER_USD
 
 

@@ -102,7 +102,7 @@ DATE_ALIASES = {"sales": {"date": "order_date", "invoice_date": "order_date", "s
                 "purchases": {"po_date": "order_date", "received_date": "receipt_date", "grn_date": "receipt_date"}}
 
 MAX_PRODUCTS = 1000
-MAX_SALES_ROWS = 300_000
+MAX_SALES_ROWS = 1_500_000
 MIN_HISTORY_DAYS = 90
 DEFAULT_LEAD_TIME = 14
 

@@ -15,6 +15,7 @@ import config as cfg  # noqa: E402
 import supply  # noqa: E402
 import real_data as rd  # noqa: E402
 import upload  # noqa: E402
+import raw_view  # noqa: E402
 
 st.set_page_config(page_title="Inventory Planner", page_icon="📦", layout="wide")
 
@@ -45,14 +46,34 @@ def check_upload(files):
 
 
 EXAMPLE = cfg.SAMPLE_DIR / "example_upload.xlsx"
+MESSY_EXAMPLE = cfg.SAMPLE_DIR / "example_messy_export.xlsx"
+SAMPLE, TIDY, MESSY = "Sample company (simulated)", "My data: tidy template", "My data: messy export (any format)"
 with st.sidebar:
     show_label = st.radio("Show money in", ["US dollars ($)", "Indian rupees (₹)"], horizontal=True)
     SHOW = "USD" if show_label.startswith("US") else "INR"
     st.header("Data")
-    mode = st.radio("Show results for", ["Sample company (simulated)", "My own data (upload)"],
-                    label_visibility="collapsed")
-    files = []
-    if mode.startswith("My own"):
+    mode = st.radio("Show results for", [SAMPLE, MESSY, TIDY], label_visibility="collapsed",
+                    captions=["", "Any sales export, as messy as it is", "Our Excel template, filled in"])
+    files, stock_files = [], []
+    if mode == MESSY:
+        st.markdown("**1. Upload your sales export.** Excel, CSV, or zipped. Title rows, totals, odd dates, "
+                    "returns, tax lines and typos are fine.")
+        up = st.file_uploader("Sales export", type=["xlsx", "xls", "xlsm", "csv", "txt", "tsv", "gz", "zip"],
+                              accept_multiple_files=True, label_visibility="collapsed", key="messy_up")
+        files = [(f.name, f.getvalue()) for f in up or []]
+        file_ccy = st.selectbox("Currency of your file", ["USD", "INR", "GBP", "EUR"],
+                                format_func=lambda c: {"USD": "US dollar ($)", "INR": "Indian rupee (₹)",
+                                                       "GBP": "British pound (£)", "EUR": "Euro (€)"}[c])
+        st.download_button("No file handy? Download a messy example", MESSY_EXAMPLE.read_bytes(),
+                           "example_messy_sales_export.xlsx", width="stretch",
+                           help="A made-up bike parts seller's accounting report, with every common mess in it.")
+        st.markdown("**2. Add stock (optional).** Unlocks reorder alerts. Get the pre-filled sheet from the "
+                    "*Unlock reorder alerts* tab.")
+        st_up = st.file_uploader("Stock sheet", type=["xlsx", "csv"], accept_multiple_files=False,
+                                 label_visibility="collapsed", key="stock_up")
+        stock_files = [(st_up.name, st_up.getvalue())] if st_up else []
+        st.caption("Your files are only used to draw this page. They are not kept, and other visitors can't see them.")
+    if mode == TIDY:
         st.markdown("**1. Get the template.** Fill in 3 sheets: products, sales, stock. "
                     "Purchases and suppliers are optional.")
         st.download_button("Download blank template (.xlsx)", template_bytes(),
@@ -69,7 +90,44 @@ with st.sidebar:
 
 db_path, upload_warnings, upload_summary = None, [], {}
 data_ccy = "INR"   # the simulated company's amounts are stored in rupees
-if mode.startswith("My own"):
+if mode == MESSY:
+    if not files:
+        st.title("Inventory Planner")
+        st.info("**Upload any sales export in the sidebar**: from Tally, QuickBooks, SAP, Shopify, a till, or a "
+                "spreadsheet someone keeps by hand. One row per sale or invoice line is all it needs.")
+        st.markdown("""
+**What it copes with**
+- Title lines above the header, page breaks with repeated headers, subtotal and grand total rows
+- Any column names (Qty, Units, Rate, MRP, Particulars, StockCode ...): it works out which column is which, and you can correct it
+- Dates in any format, including Excel numbers; amounts like ₹1,25,000.00, $1,234, (45.00) or 12 pcs
+- The same product spelt differently, duplicates, returns and credit notes, tax/freight/discount lines,
+  free samples, and huge orders keyed in by mistake and cancelled
+
+**What you get straight away:** a cleaning report, the cleaned file to download, sales trend, ABC-XYZ, a tested
+forecast, products slowing down or stopped, returns and customer concentration. Add your stock levels and you get
+reorder alerts too.
+
+No file handy? Download the messy example in the sidebar and upload it.""")
+        st.stop()
+    if not stock_files:
+        raw_view.render(files, file_ccy)
+        st.stop()
+    tables, notes = raw_view.unlocked_tables(files, stock_files)
+    if tables is None:
+        st.title("Inventory Planner")
+        st.error(notes[0])
+        st.stop()
+    t_, errors, upload_warnings, upload_summary = upload.validate(tables)
+    if errors:
+        st.title("Inventory Planner")
+        st.error("**The stock sheet couldn't be used yet:**\n\n" + "\n".join(f"- {e}" for e in errors))
+        st.stop()
+    upload_warnings = notes + upload_warnings
+    db_path = str(upload.build(t_, b"".join(n.encode() + d for n, d in files + stock_files)))
+    data_ccy = file_ccy
+    if data_ccy in ("GBP", "EUR"):
+        SHOW = data_ccy          # only dollars and rupees are converted; other currencies are shown as they are
+elif mode == TIDY:
     if not files:
         st.title("Inventory Planner")
         st.info("**Use the sidebar to upload your data.** Download the template, fill in your products, "
@@ -125,7 +183,8 @@ def m(v):
 
 
 # charts: dollars in thousands, rupees in lakh (1 lakh = 100,000)
-SCALE, SCALE_LABEL = (1e3, "$ thousand") if SHOW == "USD" else (1e5, "₹ lakh")
+CCY_NAME = {"USD": "US dollars", "INR": "rupees", "GBP": "pounds", "EUR": "euros"}
+SCALE, SCALE_LABEL = (1e5, "₹ lakh") if SHOW == "INR" else (1e3, f"{cfg.fmt(0, SHOW)[0]} thousand")
 
 
 def scaled(v):
@@ -148,15 +207,15 @@ def style_fig(fig, height=340):
 # ---------------------------------------------------------------------------
 st.title("Inventory Planner")
 if SHOW == data_ccy:
-    st.caption(f"Stock as of {today:%d %b %Y}. Money in {'US dollars' if SHOW == 'USD' else 'rupees'}.")
+    st.caption(f"Stock as of {today:%d %b %Y}. Money in {CCY_NAME[SHOW]}.")
 else:
-    st.caption(f"Stock as of {today:%d %b %Y}. Money in {'US dollars' if SHOW == 'USD' else 'rupees'}, "
+    st.caption(f"Stock as of {today:%d %b %Y}. Money in {CCY_NAME[SHOW]}, "
                f"converted at ₹{cfg.INR_PER_USD:.0f} = \\$1.")
 if uploaded:
     u = upload_summary
     st.success(f"**Your data:** {u['products']} products, {u['sales_rows']:,} sales lines from "
                f"{u['first_sale']:%d %b %Y} to {u['last_sale']:%d %b %Y}, {u['purchases']:,} deliveries. "
-               f"Amounts read as {'US dollars' if data_ccy == 'USD' else 'Indian rupees'} (change this in the sidebar).")
+               f"Amounts read as {CCY_NAME[data_ccy]} (change this in the sidebar).")
     if upload_warnings:
         with st.expander(f"{len(upload_warnings)} thing(s) to check in your data"):
             for w in upload_warnings:

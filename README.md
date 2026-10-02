@@ -12,6 +12,25 @@ An inventory and demand planning tool built in Python, SQL and Streamlit. It ans
 
 ![Reorder tab](docs/img/reorder.png)
 
+## Drop in your messiest sales export
+
+Real exports never match a template. Choose **My data: messy export (any format)** in the sidebar and upload whatever the accounting system, till or spreadsheet produced: Excel, CSV, or zipped.
+
+The app does what an analyst does by hand, and logs every step:
+
+| Problem in the file | What the app does |
+|---|---|
+| Title lines above the header, page breaks that repeat the header, subtotal and grand total rows | Finds the real header row; removes the extra lines |
+| Unfamiliar column names (Qty, Rate, Particulars, StockCode, Vch Date ...) | Works out which column is which from names *and* contents; every guess can be corrected |
+| Dates as text, day-first or month-first, Excel serial numbers | Reads them all; removes impossible dates |
+| Money like ₹1,25,000.00, $1,234, (45.00), 120-, quantities like "12 pcs" | Reads them as numbers; works out unit price from line amount if needed |
+| The same product spelt differently | Merges " brake pad " and "Brake Pad" |
+| Duplicates, returns and credit notes, tax/freight/discount lines, free samples, huge orders keyed in by mistake and cancelled | Removes each, with a reason and examples; returns are kept for the returns view |
+
+Then it gives answers from sales alone (trend, ABC-XYZ, a forecast tested against simpler methods, products slowing or stopped, returns, customer concentration) and a download of the cleaned data. A pre-filled sheet of the top 300 products lets the owner add stock, cost and lead time, which unlocks the full reorder dashboard.
+
+Tested on the real 1,067,371-row UCI file as published (about 20 seconds) and on [an awful made-up accounting report](sample_data/example_messy_export.xlsx) with every common mess in it.
+
 ## Try it with your own data
 
 Open the [live demo](https://inventory-planner-aniket.streamlit.app), choose **My own data (upload)** in the sidebar, and:
@@ -81,6 +100,9 @@ src/analysis.py              ABC, idle stock, forecast and backtest
 src/supply.py                suppliers, safety stock, EOQ, turnover, service-level simulation
 src/real_data.py             downloads, cleans and analyses the real dataset
 src/upload.py                Excel template, upload checks, a private database per upload
+src/raw_import.py            reads and cleans any messy sales export, analyses it, builds the stock sheet
+src/raw_view.py              dashboard pages for a messy export
+src/make_messy_example.py    builds the awful example export
 src/make_example_upload.py   builds the example file (a bicycle parts distributor)
 sql/                         schema and all analysis queries
 tests/                       checks for the formulas and cleaning steps
@@ -94,7 +116,7 @@ pip install -r requirements.txt
 python src/load_db.py            # simulated company (a few seconds)
 python src/real_data.py          # real dataset: downloads 45 MB, takes 2 to 3 minutes
 python -m streamlit run app.py
-python -m pytest -q              # 10 tests
+python -m pytest -q              # 15 tests
 ```
 
 ![Service level what-if](docs/img/what_if.png)
