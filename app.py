@@ -19,6 +19,14 @@ import raw_view  # noqa: E402
 import adjust  # noqa: E402
 import customers as cust  # noqa: E402
 
+# After a git push the host re-runs app.py but can keep OLD copies of the files in src/ in memory,
+# so new app code would call old functions and crash. Reload them (in dependency order) on each run.
+import importlib  # noqa: E402
+import load_db  # noqa: E402
+import raw_import  # noqa: E402
+for _mod in (cfg, an, adjust, supply, cust, load_db, upload, rd, raw_import, raw_view):
+    importlib.reload(_mod)
+
 st.set_page_config(page_title="Inventory Planner", page_icon="📦", layout="wide")
 
 # Colours (validated chart palette + status colours)
