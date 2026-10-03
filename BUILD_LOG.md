@@ -101,3 +101,18 @@ Short notes after every session: what I did, what I decided, and why.
 ## Next
 - Go through every SQL query and be able to explain it without notes.
 - Put it on GitHub, then online (Streamlit Community Cloud).
+
+## 2026-10-03 - tested on two more real companies' data
+- Walmart (M5 competition data): one California store, 3,048 products, 968,409 daily sales lines, May 2014 to May 2016.
+  - Bug found: the app crashed. In big files, repeated text such as dates is stored as categories to save memory,
+    and the date reader could not handle categories. Fixed.
+  - After the fix: read and analysed in about 20 seconds; 1,248 of 3,048 products make 80% of sales.
+- Olist (Brazilian online marketplace): 102,425 order lines, 32,951 products, Sep 2016 to Oct 2018.
+  - Bug found: order ids like 'c2b1e8f0...' and 'a5f3d2c1...' were taken for UK-style cancelled invoices (C536379)
+    and ledger adjustments (A563185), so about 8,000 real sales would have been thrown out.
+    Decision: only C or A followed by digits only counts.
+  - An "Order Status" column saying canceled is now read as a cancellation (465 lines).
+  - Finding: almost every product sold only once or twice, so product-level forecasts are poor (74% error).
+    A marketplace like this should plan by category, not by product.
+- Checked the UK file again after the fixes: same result (1,003,039 clean lines, 830 products make 80%).
+- 20 tests.

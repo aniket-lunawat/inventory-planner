@@ -264,3 +264,21 @@ def test_customer_view_is_consistent():
     mix = cu.product_mix()
     # each product's demand is split across its customers: shares add up to 100%
     assert np.allclose(mix.groupby("product_id")["share_of_product"].sum(), 1.0)
+
+
+def test_real_marketplace_and_retail_exports():
+    # Found by testing on real Olist and Walmart data (Oct 2026)
+    n = 60_000                                      # big enough that repeated text is stored as categories
+    dates = pd.Series(["2016-05-01", "2016-05-02", "2016-05-03"] * (n // 3)).astype("category")
+    assert ri.to_date(dates).notna().all()
+    df = pd.DataFrame({
+        "Order Date": ["01/05/2017 10:00", "02/05/2017 11:00", "03/05/2017 12:00", "04/05/2017 13:00"],
+        "Order ID": ["c2b1e8f0aa9", "a5f3d2c1bb0", "C536379", "e481f51cbdc"],
+        "Order Status": ["delivered", "delivered", "delivered", "canceled"],
+        "Product": ["bed bath table #4244733e"] * 4,
+        "Qty": [1, 2, 1, 1], "Unit Price (BRL)": [58.9, 58.9, 58.9, 58.9]})
+    roles = ri.guess_roles(df)
+    assert roles["doc_type"] == "Order Status"
+    sales, returns, log, fixes = ri.clean(df, roles)
+    assert len(sales) == 2                          # hex order ids starting with a or c are real sales
+    assert len(returns) == 2                        # C536379 and the canceled order

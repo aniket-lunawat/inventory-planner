@@ -51,7 +51,7 @@ ROLES = {
     "customer": ["customer id", "customer", "customer name", "party", "party name", "particulars", "client",
                  "buyer", "account", "ledger", "email", "billing name"],
     "doc_type": ["voucher type", "vch type", "transaction type", "doc type", "document type", "type", "txn type",
-                 "entry type", "financial status"],
+                 "entry type", "financial status", "order status", "status"],
     "country": ["country", "region", "state", "city", "billing country", "shipping country", "market"],
 }
 NEED = ["date", "quantity"]               # plus product_id or product_name, plus price or amount (or neither)
@@ -249,6 +249,8 @@ def _in_range(d: pd.Series) -> pd.Series:
 
 def to_date(s: pd.Series) -> pd.Series:
     """Excel dates, Excel serial numbers, '01-04-2025' (day first), '04/01/2025', '2025-04-01', '1-Apr-25' ..."""
+    if isinstance(s.dtype, pd.CategoricalDtype):        # big exports store repeated text as categories
+        s = s.astype(object)
     if pd.api.types.is_datetime64_any_dtype(s):
         return _in_range(s).astype("datetime64[ns]")
     res = pd.Series(pd.NaT, index=s.index, dtype="object")
@@ -443,14 +445,15 @@ def clean(df: pd.DataFrame, roles: dict):
 
     # 5. returns and cancellations (kept aside)
     doc_return = w["doc_type"].str.contains(RETURN_WORDS, na=False)
-    inv_cancel = w["invoice"].astype(str).str.match(r"^[Cc]\d", na=False)
+    # 'C536379' is a cancelled invoice; an order id like 'c2b1e8f0...' (letters and digits) is not
+    inv_cancel = w["invoice"].astype(str).str.strip().str.fullmatch(r"[Cc]\d+", na=False)
     neg = (w["quantity"] < 0) | ((w["quantity"].isna() | (w["quantity"] == 0)) & (w["amount"] < 0))
     returns = step("Returns and cancellations", doc_return | inv_cancel | neg,
                    "Negative quantities, credit notes and cancelled invoices. Kept aside for the returns view")
     returns = returns.assign(quantity=returns["quantity"].abs())
 
     # 6. accounting adjustments: invoice codes like A123 with no real quantity
-    adj = w["invoice"].astype(str).str.match(r"^[Aa]\d", na=False)
+    adj = w["invoice"].astype(str).str.strip().str.fullmatch(r"[Aa]\d+", na=False)
     step("Accounting adjustments", adj, "Bad-debt or ledger adjustments (invoice starting with A), not sales")
 
     # 7. quantity / price

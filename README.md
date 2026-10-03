@@ -125,7 +125,7 @@ pip install -r requirements.txt
 python src/load_db.py            # simulated company (a few seconds)
 python src/real_data.py          # real dataset: downloads 45 MB, takes 2 to 3 minutes
 python -m streamlit run app.py
-python -m pytest -q              # 19 tests
+python -m pytest -q              # 20 tests
 ```
 
 ![Service level what-if](docs/img/what_if.png)
