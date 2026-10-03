@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
+import adjust
 import analysis as an
 import config as cfg
 
@@ -72,7 +73,11 @@ def order_cost() -> float:
     return cfg.ORDER_COST_INR if cur == "INR" else cfg.ORDER_COST_INR / cfg.INR_PER_USD   # $, £ or €: about 18
 
 
-def planning_table(z: float = cfg.SERVICE_LEVEL_Z) -> pd.DataFrame:
+def planning_table(z: float = cfg.SERVICE_LEVEL_Z, adjustments=()) -> pd.DataFrame:
+    """
+    One row per product: demand, lead time, safety stock, reorder point, EOQ and status.
+    `adjustments` (see adjust.py) scale demand for products whose reorder window they fall in.
+    """
     pos = an.run_sql("stock_position")
     t = (pos.merge(demand_stats(), left_on="product_id", right_index=True, how="left")
             .merge(lead_time_stats(), left_on="product_id", right_index=True, how="left")
@@ -83,6 +88,14 @@ def planning_table(z: float = cfg.SERVICE_LEVEL_Z) -> pd.DataFrame:
     t.loc[few, "lt_mean"] = t.loc[few, "lead_time_days"]
     t.loc[few, "lt_std"] = 0.2 * t.loc[few, "lead_time_days"]
     t[["lt_mean", "lt_std"]] = t[["lt_mean", "lt_std"]].astype(float)
+
+    # planner adjustments: scale expected demand (and its spread) inside each product's reorder window
+    now = an.today()
+    t["demand_adjust"] = [adjust.multiplier(adjustments, pid, now, now + pd.Timedelta(days=lt + 30))
+                          for pid, lt in zip(t["product_id"], t["lt_mean"].fillna(0))]
+    t["avg_daily_demand"] *= t["demand_adjust"]
+    t["std_daily_demand"] *= t["demand_adjust"]
+    t["annual_units"] = t["annual_units"] * t["demand_adjust"]
 
     d, sd, lt, slt = t.avg_daily_demand, t.std_daily_demand, t.lt_mean, t.lt_std
     t["safety_stock"] = np.ceil(safety_stock(z, d, sd, lt, slt))
@@ -111,6 +124,105 @@ def planning_table(z: float = cfg.SERVICE_LEVEL_Z) -> pd.DataFrame:
     order = {"Order now": 0, "Overstock": 1, "Not selling": 2, "Make to order": 3, "OK": 4}
     return t.sort_values(["status", "days_of_cover"],
                          key=lambda s: s.map(order) if s.name == "status" else s)
+
+
+# ---------------------------------------------------------------------------
+# Comparing suppliers on what they really cost
+# ---------------------------------------------------------------------------
+UNKNOWN_RATIO = (1.15, 0.25)   # a supplier with no history: assume an average one (15% late, +-25%)
+
+
+def supplier_reliability() -> pd.DataFrame:
+    """Per supplier: actual / promised lead time (mean and spread) from past deliveries."""
+    r = an.run_sql("supplier_lead_ratio")
+    if r.empty:
+        return pd.DataFrame(columns=["supplier_name", "ratio_mean", "ratio_sd", "deliveries"])
+    g = r.groupby("supplier_id")
+    return pd.DataFrame({"supplier_name": g["supplier_name"].first(), "ratio_mean": g["ratio"].mean(),
+                         "ratio_sd": g["ratio"].std(ddof=1).fillna(0.1), "deliveries": g.size()})
+
+
+def option_lead_time(promised: float, reliability: str) -> tuple[float, float, str]:
+    """
+    Expected lead time (mean, spread) for a quote, and how it was estimated:
+      a supplier id -> scale the promise by that supplier's track record
+      'on_time'     -> trust the promise (small 5% spread)
+      'unknown'     -> assume an average supplier
+    """
+    rel = supplier_reliability()
+    if reliability in rel.index:
+        r = rel.loc[reliability]
+        return promised * r.ratio_mean, promised * r.ratio_sd, \
+            f"{r.supplier_name}'s record: {r.ratio_mean - 1:+.0%} vs promise over {int(r.deliveries)} deliveries"
+    if reliability == "on_time":
+        return promised, 0.05 * promised, "assumed to deliver on time"
+    m, s = UNKNOWN_RATIO
+    return promised * m, promised * s, "no history: assumed an average supplier (15% late, ±25%)"
+
+
+def yearly_cost(d, sd_d, annual_units, unit_cost, lt_mean, lt_sd, z=cfg.SERVICE_LEVEL_Z) -> dict:
+    """
+    Total yearly cost of buying a product from one supplier:
+      purchases      annual units x unit cost
+      ordering       orders per year (annual units / EOQ) x cost per order
+      cycle stock    average stock between deliveries (EOQ / 2) x holding cost
+      safety stock   safety stock x holding cost  <- a late or erratic supplier costs more here
+    """
+    q = max(float(eoq(max(annual_units, 1), unit_cost)), 1.0)
+    ss = float(np.ceil(safety_stock(z, d, sd_d, lt_mean, lt_sd)))
+    h = cfg.HOLDING_RATE * unit_cost
+    parts = {"purchases": annual_units * unit_cost, "ordering": annual_units / q * order_cost(),
+             "cycle_stock": q / 2 * h, "safety_stock_cost": ss * h}
+    return {**parts, "total": sum(parts.values()), "safety_stock_units": ss, "eoq": q}
+
+
+def compare_suppliers(product_id: str, options: list, z=cfg.SERVICE_LEVEL_Z, adjustments=()) -> pd.DataFrame:
+    """
+    Current supplier vs each option for one product, on total yearly cost.
+    options: [{"supplier_name", "unit_cost", "promised_lead_time_days", "reliability"}]
+    """
+    row = planning_table(z, adjustments).set_index("product_id").loc[product_id]
+    d, sd_d, D = row.avg_daily_demand, row.std_daily_demand, row.annual_units
+    rows = [{"supplier": f"{row.supplier_name or 'Current supplier'} (current)", "unit_cost": row.unit_cost_inr,
+             "promised_days": row.lead_time_days, "expected_days": row.lt_mean, "spread_days": row.lt_std,
+             "basis": "this product's own past deliveries" if row.lt_obs >= 3 else "promised lead time (few deliveries)",
+             **yearly_cost(d, sd_d, D, row.unit_cost_inr, row.lt_mean, row.lt_std, z)}]
+    for o in options:
+        lt_m, lt_s, basis = option_lead_time(float(o["promised_lead_time_days"]), str(o.get("reliability", "unknown")))
+        rows.append({"supplier": o["supplier_name"], "unit_cost": float(o["unit_cost"]),
+                     "promised_days": float(o["promised_lead_time_days"]), "expected_days": lt_m,
+                     "spread_days": lt_s, "basis": basis,
+                     **yearly_cost(d, sd_d, D, float(o["unit_cost"]), lt_m, lt_s, z)})
+    t = pd.DataFrame(rows)
+    t["vs_current"] = t["total"] - t["total"].iloc[0]
+    t.attrs.update(product=row.product_name, annual_units=D)
+    return t
+
+
+def sample_supplier_options() -> pd.DataFrame:
+    """Alternative quotes for the simulated company (only meaningful on the sample data)."""
+    path = cfg.SAMPLE_DIR / "supplier_options.csv"
+    return pd.read_csv(path, dtype={"product_id": str}) if path.exists() else pd.DataFrame()
+
+
+def supplier_switch_summary(adjustments=()) -> pd.DataFrame:
+    """Every sample quote compared with the current supplier: best choice per product."""
+    opts = sample_supplier_options()
+    out = []
+    for pid, grp in opts.groupby("product_id", sort=False):
+        t = compare_suppliers(pid, [{"supplier_name": r.supplier_name, "unit_cost": r.unit_cost_inr,
+                                     "promised_lead_time_days": r.promised_lead_time_days,
+                                     "reliability": r.reliability} for r in grp.itertuples()],
+                              adjustments=adjustments)
+        best = t.loc[t["total"].idxmin()]
+        alt = t.iloc[1]
+        out.append({"product_id": pid, "product": t.attrs["product"], "current": t.iloc[0]["supplier"],
+                    "alternative": alt["supplier"], "price_change": alt["unit_cost"] / t.iloc[0]["unit_cost"] - 1,
+                    "lead_time_change": alt["expected_days"] - t.iloc[0]["expected_days"],
+                    "yearly_saving": -alt["vs_current"],
+                    "verdict": "Switch" if best["supplier"] == alt["supplier"] else "Stay",
+                    "note": grp.iloc[0]["note"]})
+    return pd.DataFrame(out)
 
 
 # ---------------------------------------------------------------------------

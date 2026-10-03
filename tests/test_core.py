@@ -212,3 +212,43 @@ def test_ugly_export_is_read_cleaned_and_explained():
     assert len(sales) == 120 and sales["price"].eq(250).all()   # price worked out as value / qty
     a = ri.analyse(sales, returns)
     assert a["products"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Planner adjustments and supplier comparison
+# ---------------------------------------------------------------------------
+import adjust  # noqa: E402
+
+
+def test_adjustments_apply_only_inside_their_window_and_multiply():
+    adj = adjust.clean([
+        {"product": "P09 · White Contrast Paint Aerosol", "change_pct": 30, "from_month": "Oct 2026", "to_month": None},
+        {"product": adjust.ALL, "change_pct": -10, "from_month": "Oct 2026", "to_month": "Oct 2026"},
+        {"product": "P01 · AC Yoke", "change_pct": None, "from_month": "Oct 2026"},          # incomplete: skipped
+    ])
+    assert len(adj) == 2 and adj[0][0] == "P09"
+    assert adjust.multiplier(adj, "P09", "2026-10-05", "2026-10-20") == pytest.approx(1.3 * 0.9)
+    assert adjust.multiplier(adj, "P05", "2026-10-05", "2026-10-20") == pytest.approx(0.9)
+    assert adjust.multiplier(adj, "P09", "2026-12-01", "2026-12-31") == 1.0               # outside the window
+
+
+def test_more_expected_demand_raises_the_reorder_point():
+    base = supply.planning_table().set_index("product_id")
+    adj = (("P09", 50.0, "2026-09", "2026-12", "trade show"),)
+    up = supply.planning_table(adjustments=adj).set_index("product_id")
+    assert up.loc["P09", "reorder_point"] > base.loc["P09", "reorder_point"]
+    assert up.loc["P05", "reorder_point"] == base.loc["P05", "reorder_point"]             # others untouched
+
+
+def test_supplier_comparison_counts_safety_stock():
+    row = supply.planning_table().set_index("product_id").loc["P09"]   # a fast seller
+    same_price = {"supplier_name": "X", "unit_cost": row.unit_cost_inr, "promised_lead_time_days": row.lead_time_days}
+    t = supply.compare_suppliers("P09", [{**same_price, "reliability": "on_time"},
+                                         {**same_price, "reliability": "S5"}])
+    parts = t[["purchases", "ordering", "cycle_stock", "safety_stock_cost"]].sum(axis=1)
+    assert np.allclose(parts, t["total"])
+    # same price: the on-time supplier needs less safety stock than one as late as the importer
+    assert t.loc[1, "safety_stock_units"] < t.loc[2, "safety_stock_units"]
+    assert t.loc[1, "total"] < t.loc[2, "total"]
+    sw = supply.supplier_switch_summary()
+    assert set(sw["verdict"]) == {"Switch", "Stay"}                                        # the sample has both stories

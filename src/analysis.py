@@ -97,10 +97,10 @@ def idle_stock() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # 3. Reorder alerts
 # ---------------------------------------------------------------------------
-def reorder_table() -> pd.DataFrame:
+def reorder_table(adjustments=()) -> pd.DataFrame:
     """Reorder status per product. The maths lives in supply.planning_table()."""
     import supply  # imported here to avoid a circular import
-    return supply.planning_table()
+    return supply.planning_table(adjustments=adjustments)
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +134,7 @@ def _forecast_from(history: pd.DataFrame, target: pd.Timestamp, s_idx: pd.Series
     return (deseason * s_idx.loc[target.month]).clip(lower=0)
 
 
-def forecast() -> tuple[pd.DataFrame, dict]:
+def forecast(adjustments=()) -> tuple[pd.DataFrame, dict]:
     """
     Forecast = average of the last 3 full months (with seasonality removed)
                x how busy the target month usually is.
@@ -145,6 +145,11 @@ def forecast() -> tuple[pd.DataFrame, dict]:
     s_idx = seasonal_index(m)
     target = today().to_period("M").to_timestamp() + pd.offsets.MonthBegin(1)
     fc = _forecast_from(m, target, s_idx)
+    import adjust
+    mult = pd.Series({p: adjust.multiplier(adjustments, p, target, target + pd.offsets.MonthEnd(0))
+                      for p in fc.index})
+    base = fc.copy()
+    fc = fc * mult       # planner adjustments for next month (the backtest below stays unadjusted)
 
     # backtest: the last 6 months, or fewer if the history is short
     # (each test month needs at least 3 earlier months)
@@ -168,7 +173,9 @@ def forecast() -> tuple[pd.DataFrame, dict]:
         "product_id": fc.index,
         "product_name": names.loc[fc.index, "product_name"].values,
         "last_3_months_avg": m.tail(3).mean().round(1).values,
+        "history_forecast": base.round(0).astype(int).values,
         "forecast_units": fc.round(0).astype(int).values,
+        "adjustment": mult.values,
         "on_hand_units": names.loc[fc.index, "on_hand_units"].values,
     })
     out["target_month"] = target.strftime("%b %Y")

@@ -1,0 +1,8 @@
+product_id,supplier_name,unit_cost_inr,promised_lead_time_days,reliability,note
+P17,Supplier F - Domestic Instruments (Bengaluru),19800,21,unknown,New local maker quoting 10% more than the importer
+P16,Supplier F - Domestic Instruments (Bengaluru),23000,21,unknown,New local maker quoting 10% more than the importer
+P15,Supplier F - Domestic Instruments (Bengaluru),17800,25,unknown,New local maker quoting 8% more than the importer
+P09,Supplier B - Powders & Inks (Vapi),172,12,S2,Existing supplier offering 10% cheaper aerosols with a longer lead time
+P08,Supplier B - Powders & Inks (Vapi),190,12,S2,Existing supplier offering 10% cheaper aerosols with a longer lead time
+P18,Supplier A - Castings & Coils (Pune),370,14,S1,Reliable existing supplier quoting 6% more than the machining shop
+P12,Supplier A - Castings & Coils (Pune),2950,25,S1,Reliable existing supplier quoting 5% more than the machining shop

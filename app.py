@@ -16,6 +16,7 @@ import supply  # noqa: E402
 import real_data as rd  # noqa: E402
 import upload  # noqa: E402
 import raw_view  # noqa: E402
+import adjust  # noqa: E402
 
 st.set_page_config(page_title="Inventory Planner", page_icon="📦", layout="wide")
 
@@ -144,17 +145,24 @@ elif mode == TIDY:
         st.stop()
     data_ccy = "USD" if file_ccy_label == "US dollars" else "INR"
 an.use_db(db_path, data_ccy)   # None = the simulated company
+adjustments = adjust.clean(st.session_state.get("adj_rows", []))   # planner's demand adjustments
 
 
 @st.cache_data(show_spinner="Crunching the numbers...")
-def load(db, ccy):
+def load(db, ccy, adj=()):
     an.use_db(db, ccy)
     if db is None and not cfg.DB_PATH.exists():
         import load_db
         load_db.main()
-    fc, acc = an.forecast()
-    return (an.abc(), an.monthly_sales(), an.idle_stock(), an.reorder_table(), fc, acc, an.today(),
+    fc, acc = an.forecast(adj)
+    return (an.abc(), an.monthly_sales(), an.idle_stock(), an.reorder_table(adj), fc, acc, an.today(),
             supply.supplier_scorecard(), supply.turnover())
+
+
+@st.cache_data(show_spinner="Comparing suppliers on total yearly cost...")
+def switch_summary(db, ccy, adj=()):
+    an.use_db(db, ccy)
+    return supply.supplier_switch_summary(adj)
 
 
 @st.cache_data(show_spinner="Simulating a year of orders, 300 times per service level...")
@@ -163,7 +171,7 @@ def what_if(db, ccy):
     return supply.simulate_service_levels()
 
 
-abc, monthly, idle, reorder, fc, acc, today, suppliers, turns = load(db_path, data_ccy)
+abc, monthly, idle, reorder, fc, acc, today, suppliers, turns = load(db_path, data_ccy, adjustments)
 using_real = all((cfg.RAW_DIR / f"{t}.csv").exists() for t in ["sales", "products", "stock"])
 uploaded = db_path is not None
 
@@ -175,6 +183,12 @@ def pct(v):
 def money(v):
     """An amount from the data, converted to the chosen display currency and formatted."""
     return cfg.fmt(cfg.convert(v, data_ccy, SHOW), SHOW)
+
+
+def price(v):
+    """A unit price: keeps cents (or paise) for small amounts, unlike money()."""
+    x = cfg.convert(v, data_ccy, SHOW)
+    return f"{cfg.fmt(0, SHOW)[0]}{x:,.2f}" if abs(x) < 100 else money(v)
 
 
 def m(v):
@@ -224,6 +238,10 @@ elif not using_real:
     st.info("**Simulated data.** A made-up company modeled on a small Indian manufacturer of magnetic "
             "inspection tools: 24 products, 40 customers, 2 years of orders. No real company figures are shown.")
 
+if adjustments:
+    st.warning(f"**{len(adjustments)} demand adjustment(s) active.** They change next month's forecast and the "
+               "reorder points of the products they cover. See the ✏️ Adjust demand tab.")
+
 order_now = reorder[reorder.status == "Order now"]
 stuck = idle.stock_value_inr.sum() + reorder.loc[reorder.status == "Overstock", "stock_value_inr"].sum()
 rev12 = abc.revenue_inr.sum()
@@ -245,8 +263,8 @@ with k4:
         st.metric("Forecast accuracy", f"{1 - acc['wape']:.0%}")
         st.caption(f"Tested on the last {acc['months_tested']} months (simple guess: {1 - acc['naive_wape']:.0%})")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "🔴 Reorder now", "📈 What sells", "🔮 Next month", "📦 Stuck stock", "🚚 Suppliers",
+tab1, tab2, tab3, tab_adj, tab4, tab5, tab6, tab7 = st.tabs([
+    "🔴 Reorder now", "📈 What sells", "🔮 Next month", "✏️ Adjust demand", "📦 Stuck stock", "🚚 Suppliers",
     "⚖️ Service level what-if", "🇬🇧 Real data: UK wholesaler"])
 
 # ---------------------------------------------------------------------------
@@ -262,7 +280,8 @@ with tab1:
     show["Order value"] = show.suggested_order_value_inr.apply(lambda v: money(v) if v else "")
     show["suggested_order_units"] = show.suggested_order_units.apply(lambda q: str(q) if q else "")
     show["Actual lead time (days)"] = show.lt_mean.round(0).astype(int)
-    table = show[["Status", "product_name", "on_hand_units", "reorder_point", "Days of stock left",
+    show["Demand adj."] = show.demand_adjust.map(lambda x: "" if abs(x - 1) < 1e-9 else f"{x - 1:+.0%}")
+    table = show[["Status", "product_name", "Demand adj.", "on_hand_units", "reorder_point", "Days of stock left",
                   "lead_time_days", "Actual lead time (days)", "suggested_order_units", "Order value",
                   "supplier_name"]].rename(columns={
         "product_name": "Product", "on_hand_units": "In stock", "reorder_point": "Reorder at",
@@ -271,6 +290,8 @@ with tab1:
     only_action = st.toggle("Show only products that need action", value=True)
     if only_action:
         table = table[~table.Status.str.contains("OK|Make to order")]
+    if not adjustments:
+        table = table.drop(columns="Demand adj.")
     st.dataframe(table, hide_index=True, width="stretch",
                  column_config={"Reorder at": st.column_config.NumberColumn(format="%d")})
     st.download_button("Download order list (Excel/CSV)",
@@ -337,10 +358,77 @@ with tab3:
                  f"on average, versus {acc['naive_wape']:.0%} for simply repeating last month.")
     f = fc.copy()
     f["Enough stock?"] = (f.on_hand_units >= f.forecast_units).map({True: "🟢 Yes", False: "🔴 No"})
-    st.dataframe(f[["product_name", "last_3_months_avg", "forecast_units", "on_hand_units", "Enough stock?"]]
-                 .rename(columns={"product_name": "Product", "last_3_months_avg": "Avg last 3 months",
-                                  "forecast_units": "Forecast (units)", "on_hand_units": "In stock"}),
+    f["Your adjustment"] = f.adjustment.map(lambda x: "" if abs(x - 1) < 1e-9 else f"{x - 1:+.0%}")
+    cols = ["product_name", "last_3_months_avg", "history_forecast", "Your adjustment", "forecast_units",
+            "on_hand_units", "Enough stock?"]
+    if not (f.adjustment != 1).any():
+        cols = [c for c in cols if c not in ("history_forecast", "Your adjustment")]
+    st.dataframe(f[cols].rename(columns={"product_name": "Product", "last_3_months_avg": "Avg last 3 months",
+                                         "history_forecast": "From history", "forecast_units": "Forecast (units)",
+                                         "on_hand_units": "In stock"}),
                  hide_index=True, width="stretch")
+
+# ---------------------------------------------------------------------------
+# 3b. Planner demand adjustments
+# ---------------------------------------------------------------------------
+with tab_adj:
+    st.subheader("Tell the forecast what history can't know")
+    st.write("A trade show, a new contract, a price rise, a festival shutdown: you know these before the sales data "
+             "does. Add them here. An adjustment changes **next month's forecast** if it covers next month, and a "
+             "product's **reorder point and safety stock** if it falls before a new order would arrive plus one "
+             "more month. Adjustments that overlap multiply (+30% and −10% give +17%).")
+    prod_opts = [adjust.ALL] + [f"{p} · {n}" for p, n in zip(reorder.product_id, reorder.product_name)]
+    first = today.to_period("M").to_timestamp()
+    month_opts = [(first + pd.DateOffset(months=i)).strftime("%b %Y") for i in range(13)]
+    ADJ_COLS = ["product", "change_pct", "from_month", "to_month", "reason"]
+    if "adj_base" not in st.session_state:
+        st.session_state["adj_base"] = pd.DataFrame(columns=ADJ_COLS)
+    b1, b2, _ = st.columns([1, 1, 3])
+    if b1.button("Load an example", help="A trade-show order for one product and a festival slowdown for all"):
+        nxt = month_opts[1] if len(month_opts) > 1 else month_opts[0]
+        ex = pd.DataFrame([
+            {"product": prod_opts[1], "change_pct": 30, "from_month": month_opts[0], "to_month": nxt,
+             "reason": "Big order expected from a new steel-plant customer"},
+            {"product": adjust.ALL, "change_pct": -15, "from_month": nxt, "to_month": nxt,
+             "reason": "Festival week: customers' plants shut"}], columns=ADJ_COLS)
+        st.session_state.update(adj_base=ex, adj_rows=ex.to_dict("records"))
+        st.session_state.pop("adj_editor", None)
+        st.rerun()
+    if b2.button("Clear all"):
+        st.session_state.update(adj_base=pd.DataFrame(columns=ADJ_COLS), adj_rows=[])
+        st.session_state.pop("adj_editor", None)
+        st.rerun()
+    edited = st.data_editor(
+        st.session_state["adj_base"], num_rows="dynamic", width="stretch", key="adj_editor", hide_index=True,
+        column_config={
+            "product": st.column_config.SelectboxColumn("Product", options=prod_opts, required=True, width="large"),
+            "change_pct": st.column_config.NumberColumn("Change %", min_value=-100, max_value=500, step=5,
+                                                        format="%+d%%", required=True),
+            "from_month": st.column_config.SelectboxColumn("From", options=month_opts, required=True),
+            "to_month": st.column_config.SelectboxColumn("To", options=month_opts),
+            "reason": st.column_config.TextColumn("Reason (for your records)", width="large")})
+    pending = adjust.clean(edited.to_dict("records")) != adjustments
+    if st.button("Apply adjustments", type="primary", disabled=not pending):
+        st.session_state["adj_rows"] = edited.to_dict("records")
+        st.rerun()
+    if pending:
+        st.caption("Changes not applied yet. Click **Apply adjustments** to update the forecast and reorder points.")
+    if adjustments:
+        base = load(db_path, data_ccy, ())[3].set_index("product_id")
+        now_ = reorder.set_index("product_id")
+        hit = now_[now_.demand_adjust != 1]
+        if len(hit):
+            st.markdown(f"**Effect on reorder planning ({len(hit)} products)**")
+            eff = pd.DataFrame({
+                "Product": hit.product_name, "Demand": hit.demand_adjust.map(lambda x: f"{x - 1:+.0%}"),
+                "Reorder at (history only)": base.loc[hit.index, "reorder_point"].astype(int),
+                "Reorder at (adjusted)": hit.reorder_point.astype(int),
+                "Status (history only)": base.loc[hit.index, "status"].map(STATUS_ICON),
+                "Status (adjusted)": hit.status.map(STATUS_ICON)})
+            st.dataframe(eff, hide_index=True, width="stretch")
+        else:
+            st.caption("None of the adjustments falls inside a product's reorder window yet, so reorder points "
+                       "are unchanged. They may still change next month's forecast.")
 
 # ---------------------------------------------------------------------------
 # 4. Stuck stock
@@ -386,6 +474,69 @@ with tab5:
         hide_index=True, width="stretch",
         column_config={"On time %": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100)})
     st.caption(f"On time = delivered no more than {cfg.ON_TIME_GRACE_DAYS} days after the promised lead time.")
+
+    st.subheader("Should we switch supplier?")
+    st.write("The cheapest quote isn't always the cheapest supplier. A late or erratic supplier forces you to hold "
+             "more safety stock, and that stock costs money every year. So we compare **total yearly cost**: "
+             "purchases + ordering + average stock between deliveries + safety stock, with lead times taken from "
+             "each supplier's real delivery record, not its promise.")
+    if db_path is None:
+        sw = switch_summary(db_path, data_ccy, adjustments)
+        if len(sw):
+            v = pd.DataFrame({
+                "Product": sw["product"], "Alternative quote": sw["alternative"],
+                "Price": sw["price_change"].map(lambda x: f"{x:+.0%}"),
+                "Lead time": sw["lead_time_change"].map(lambda x: f"{x:+.0f} days"),
+                "Yearly saving if we switch": sw["yearly_saving"].map(money),
+                "Verdict": sw["verdict"].map({"Switch": "✅ Switch", "Stay": "✋ Stay"}),
+                "The quote": sw["note"]})
+            st.dataframe(v, hide_index=True, width="stretch")
+            st.caption("A negative saving means switching would cost more. Price usually dominates; reliability "
+                       "wins when the price gap is small, demand is high, or the current supplier is very erratic.")
+
+    st.markdown("**Try a quote from any supplier**")
+    stocked = reorder[~reorder.status.isin(["Not selling"])]
+    rel_opts = {"unknown": "No history: assume an average supplier (15% late, ±25%)",
+                "on_time": "Trust the promise: always on time"}
+    if not suppliers.empty:
+        rel_opts.update({r.supplier_id: f"As reliable as {r.supplier_name} ({r.on_time_pct:.0f}% on time)"
+                         for r in suppliers.itertuples()})
+    with st.form("quote"):
+        q1, q2 = st.columns(2)
+        pick = q1.selectbox("Product", [f"{p} · {n}" for p, n in zip(stocked.product_id, stocked.product_name)])
+        name = q2.text_input("Supplier name", "New supplier")
+        q3, q4, q5 = st.columns([1, 1, 2])
+        cur = stocked.set_index("product_id").loc[pick.split(" · ")[0]]
+        quote_price = q3.number_input(f"Unit price ({cfg.fmt(0, SHOW)[0]})",
+                                value=float(round(cfg.convert(cur.unit_cost_inr, data_ccy, SHOW) * 0.95, 2)),
+                                min_value=0.0, step=1.0)
+        lt = q4.number_input("Promised lead time (days)", value=int(cur.lead_time_days), min_value=1, step=1)
+        rel = q5.selectbox("How reliable will they be?", list(rel_opts), format_func=rel_opts.get)
+        go_ = st.form_submit_button("Compare with current supplier", type="primary")
+    if go_:
+        an.use_db(db_path, data_ccy)
+        t = supply.compare_suppliers(pick.split(" · ")[0], [{
+            "supplier_name": name, "unit_cost": cfg.convert(quote_price, SHOW, data_ccy),
+            "promised_lead_time_days": lt, "reliability": rel}], adjustments=adjustments)
+        view = pd.DataFrame({
+            "Supplier": t.supplier, "Unit price": t.unit_cost.map(price),
+            "Lead time (expected ± spread)": [f"{a:.0f} ± {b:.0f} days" for a, b in zip(t.expected_days, t.spread_days)],
+            "Safety stock": t.safety_stock_units.astype(int), "Purchases / yr": t.purchases.map(money),
+            "Ordering / yr": t.ordering.map(money), "Stock between deliveries / yr": t.cycle_stock.map(money),
+            "Safety stock / yr": t.safety_stock_cost.map(money), "Total / yr": t.total.map(money)})
+        st.dataframe(view, hide_index=True, width="stretch")
+        d_total = t.total.iloc[1] - t.total.iloc[0]
+        d_price = t.purchases.iloc[1] - t.purchases.iloc[0]
+        d_safety = t.safety_stock_cost.iloc[1] - t.safety_stock_cost.iloc[0]
+        verdict = "cheaper" if d_total < 0 else "more expensive"
+        word = lambda x: "saves" if x < 0 else "adds"  # noqa: E731
+        st.markdown(f"**{name} is {m(abs(d_total))} a year {verdict}** in total. Its price {word(d_price)} "
+                    f"{m(abs(d_price))} a year; safety stock {word(d_safety)} {m(abs(d_safety))}, because its lead "
+                    f"time is estimated at {t.expected_days.iloc[1]:.0f} ± {t.spread_days.iloc[1]:.0f} days "
+                    f"({t.basis.iloc[1]}) against {t.expected_days.iloc[0]:.0f} ± {t.spread_days.iloc[0]:.0f} now. "
+                    f"**{'Worth switching' if d_total < 0 else 'Stay with the current supplier'}** on cost alone.")
+        st.caption("Also weigh what the numbers don't show: quality, payment terms, and the risk of relying "
+                   "on a single supplier.")
 
     st.subheader("How fast does stock turn into sales?")
     all_row = turns[turns.category == "All products"].iloc[0]

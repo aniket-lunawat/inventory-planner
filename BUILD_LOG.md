@@ -78,6 +78,17 @@ Short notes after every session: what I did, what I decided, and why.
   reading Excel one sheet at a time (the free host allows up to 2.7 GB).
 - 15 tests.
 
+## 2026-10-03 - planner adjustments and supplier comparison
+- Demand adjustments: product (or all) x % x months x reason. They scale next month's forecast, and the demand
+  used for reorder planning when they fall inside a product's reorder window (today to lead time + 1 month).
+  - Decision: an "Apply" button instead of live updates, so half-typed rows don't change the plan.
+  - Decision: the backtest stays unadjusted, so forecast accuracy still measures the model, not my guesses.
+- Supplier comparison on total yearly cost = purchases + ordering + cycle stock + safety stock holding.
+  - New SQL: supplier_lead_ratio.sql (actual / promised lead time per delivery), so a supplier's track
+    record can be applied to a product it hasn't supplied yet. No history -> assume an average supplier.
+  - Finding: price usually dominates. Reliability wins only when the price gap is small or demand is high.
+- 3 new tests (18). Bug caught in the browser: a variable named `price` hid the new price() function.
+
 ## Next
 - Go through every SQL query and be able to explain it without notes.
 - Put it on GitHub, then online (Streamlit Community Cloud).
