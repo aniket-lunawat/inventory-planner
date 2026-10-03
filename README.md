@@ -17,6 +17,8 @@ An inventory and demand planning tool built in Python, SQL and Streamlit. It ans
 - **✏️ Adjust demand.** History can't know about a trade show, a new contract or a festival shutdown. A planner adds "+30% for Product X in Oct–Nov" or "−15% for all products in October"; the forecast and the reorder points of the products affected update, with a before/after table. Adjustments that overlap multiply.
 - **Should we switch supplier?** Compares suppliers on **total yearly cost**: purchases + ordering + average stock between deliveries + **safety stock**, with each supplier's lead time taken from its real delivery record (actual ÷ promised, from SQL), not its promise. In the sample company a 10% cheaper but slower aerosol supplier saves money, while a faster local meter maker at +10% does not. A form prices any new quote against the current supplier.
 
+- **👥 Customers.** How many customers make 80% of sales, the biggest customer's share (a dependency warning above 25%), customers who have **gone quiet** (silent for 2.5× their usual gap between orders) or are **slowing**, products whose demand leans on those customers, products that depend on a single customer, sales by customer type, and what each customer buys. Two new SQL queries, one using a window function to get each customer's share of every product.
+
 ## Drop in your messiest sales export
 
 Real exports never match a template. Choose **My data: messy export (any format)** in the sidebar and upload whatever the accounting system, till or spreadsheet produced: Excel, CSV, or zipped.
@@ -104,6 +106,7 @@ src/load_db.py               loads and checks the simulated data
 src/analysis.py              ABC, idle stock, forecast and backtest
 src/supply.py                suppliers, safety stock, EOQ, turnover, service-level simulation, supplier cost comparison
 src/adjust.py                planner demand adjustments
+src/customers.py             customer concentration, quiet and slowing customers, product dependence
 src/real_data.py             downloads, cleans and analyses the real dataset
 src/upload.py                Excel template, upload checks, a private database per upload
 src/raw_import.py            reads and cleans any messy sales export, analyses it, builds the stock sheet
@@ -122,7 +125,7 @@ pip install -r requirements.txt
 python src/load_db.py            # simulated company (a few seconds)
 python src/real_data.py          # real dataset: downloads 45 MB, takes 2 to 3 minutes
 python -m streamlit run app.py
-python -m pytest -q              # 18 tests
+python -m pytest -q              # 19 tests
 ```
 
 ![Service level what-if](docs/img/what_if.png)

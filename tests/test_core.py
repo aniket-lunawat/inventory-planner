@@ -252,3 +252,15 @@ def test_supplier_comparison_counts_safety_stock():
     assert t.loc[1, "total"] < t.loc[2, "total"]
     sw = supply.supplier_switch_summary()
     assert set(sw["verdict"]) == {"Switch", "Stay"}                                        # the sample has both stories
+
+
+def test_customer_view_is_consistent():
+    import customers as cu
+    s = cu.summary()
+    assert len(s) == 40 and s["share"].sum() == pytest.approx(1.0)
+    assert set(s["status"]) <= {"Active", "New", "Slowing", "Gone quiet"}
+    conc = cu.concentration(s)
+    assert 1 <= conc["n_for_80"] <= conc["customers"] and conc["top10_share"] >= conc["top1_share"]
+    mix = cu.product_mix()
+    # each product's demand is split across its customers: shares add up to 100%
+    assert np.allclose(mix.groupby("product_id")["share_of_product"].sum(), 1.0)

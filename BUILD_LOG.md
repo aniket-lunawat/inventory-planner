@@ -89,6 +89,15 @@ Short notes after every session: what I did, what I decided, and why.
   - Finding: price usually dominates. Reliability wins only when the price gap is small or demand is high.
 - 3 new tests (18). Bug caught in the browser: a variable named `price` hid the new price() function.
 
+## 2026-10-03 - customers tab
+- A company sells to many buyers; the planning dashboard now shows them. New SQL: customer_summary.sql and
+  customer_product_mix.sql (window function: each customer's share of a product's demand).
+- Finding on the sample: one dealer is 46% of sales, a big dependency.
+- Decision: "gone quiet" = a regular customer silent for 2.5x their usual gap, so rare buyers aren't flagged.
+  "Slowing" only for sizeable customers who order at least every ~6 weeks; at first it flagged 11 of 40,
+  mostly small, lumpy buyers.
+- 19 tests.
+
 ## Next
 - Go through every SQL query and be able to explain it without notes.
 - Put it on GitHub, then online (Streamlit Community Cloud).

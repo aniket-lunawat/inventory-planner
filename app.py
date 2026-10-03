@@ -17,6 +17,7 @@ import real_data as rd  # noqa: E402
 import upload  # noqa: E402
 import raw_view  # noqa: E402
 import adjust  # noqa: E402
+import customers as cust  # noqa: E402
 
 st.set_page_config(page_title="Inventory Planner", page_icon="📦", layout="wide")
 
@@ -159,6 +160,14 @@ def load(db, ccy, adj=()):
             supply.supplier_scorecard(), supply.turnover())
 
 
+@st.cache_data(show_spinner="Looking at your customers...")
+def customer_data(db, ccy):
+    an.use_db(db, ccy)
+    s_ = cust.summary()
+    mix_ = cust.product_mix()
+    return s_, cust.concentration(s_), mix_, cust.at_risk(s_, mix_)
+
+
 @st.cache_data(show_spinner="Comparing suppliers on total yearly cost...")
 def switch_summary(db, ccy, adj=()):
     an.use_db(db, ccy)
@@ -263,8 +272,9 @@ with k4:
         st.metric("Forecast accuracy", f"{1 - acc['wape']:.0%}")
         st.caption(f"Tested on the last {acc['months_tested']} months (simple guess: {1 - acc['naive_wape']:.0%})")
 
-tab1, tab2, tab3, tab_adj, tab4, tab5, tab6, tab7 = st.tabs([
-    "🔴 Reorder now", "📈 What sells", "🔮 Next month", "✏️ Adjust demand", "📦 Stuck stock", "🚚 Suppliers",
+tab1, tab2, tab3, tab_adj, tab_cust, tab4, tab5, tab6, tab7 = st.tabs([
+    "🔴 Reorder now", "📈 What sells", "🔮 Next month", "✏️ Adjust demand", "👥 Customers", "📦 Stuck stock",
+    "🚚 Suppliers",
     "⚖️ Service level what-if", "🇬🇧 Real data: UK wholesaler"])
 
 # ---------------------------------------------------------------------------
@@ -429,6 +439,96 @@ with tab_adj:
         else:
             st.caption("None of the adjustments falls inside a product's reorder window yet, so reorder points "
                        "are unchanged. They may still change next month's forecast.")
+
+# ---------------------------------------------------------------------------
+# 3c. Customers
+# ---------------------------------------------------------------------------
+CUST_ICON = {"Active": "🟢 Active", "New": "🔵 New", "Slowing": "🟠 Slowing", "Gone quiet": "🔴 Gone quiet"}
+with tab_cust:
+    cs, conc, mix, risk = customer_data(db_path, data_ccy)
+    if cs.empty or conc["customers"] == 0:
+        st.info("No customer IDs in the sales data, so there's nothing to show here. Add a customer column "
+                "(ID or name) to your sales to see who buys what.")
+    else:
+        top = cs.iloc[0]
+        st.subheader(f"{conc['n_for_80']} of {conc['customers']} customers bring in 80% of sales")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Customers, last 12 months", f"{conc['customers']:,}")
+        c2.metric("Biggest customer", f"{conc['top1_share']:.0%}")
+        c2.caption(str(top.customer_name))
+        c3.metric("Top 10 customers", f"{conc['top10_share']:.0%}")
+        quiet = cs[cs.status.isin(["Gone quiet", "Slowing"])]
+        c4.metric("Gone quiet or slowing", f"{len(quiet)}")
+        if conc["top1_share"] >= 0.25:
+            st.warning(f"**{top.customer_name} alone is {conc['top1_share']:.0%} of sales.** That's a big dependency: "
+                       "if they cut back, demand for the products they buy drops sharply. Keep in close touch, "
+                       "agree forecasts with them, and grow other customers.")
+
+        st.markdown("**Customers to call this week**")
+        if len(quiet):
+            q = quiet.assign(**{
+                "Customer": quiet.customer_name, "Status": quiet.status.map(CUST_ICON),
+                "Last order": quiet.last_order.dt.strftime("%d %b %Y"), "Days since": quiet.days_since.astype(int),
+                "Usually orders every": quiet.usual_gap.round(0).map(lambda x: f"{x:.0f} days" if x == x else ""),
+                "Sales, last 3 months": quiet.revenue_last_3m.map(money),
+                "Sales, 3 months before": quiet.revenue_prior_3m.map(money)})
+            st.dataframe(q[["Customer", "Status", "Last order", "Days since", "Usually orders every",
+                            "Sales, last 3 months", "Sales, 3 months before"]], hide_index=True, width="stretch")
+            st.caption(f"Gone quiet = a regular customer silent for {cust.QUIET_FACTOR:g} times their usual gap "
+                       "between orders. Slowing = a sizeable, frequent customer whose last 3 months are under half "
+                       "of the 3 months before.")
+        else:
+            st.write("Every regular customer is ordering at their usual pace.")
+
+        stocked_ids = set(reorder.loc[~reorder.status.isin(["Not selling"]), "product_id"])
+        risk_s = risk[risk.product_id.isin(stocked_ids)] if len(risk) else risk
+        if len(risk_s):
+            st.markdown("**Stock at risk:** products where those customers took a big share of demand. "
+                        "Order less of these until you know what's happening.")
+            st.dataframe(risk_s.assign(**{"Share of demand": risk_s.share_at_risk.map(lambda x: f"{x:.0%}")})[
+                ["product_name", "Share of demand", "customers"]].rename(columns={
+                    "product_name": "Product", "customers": "From customers"}), hide_index=True, width="stretch")
+
+        dep = mix.sort_values("share_of_product", ascending=False).drop_duplicates("product_id")
+        dep = dep[(dep.share_of_product >= 0.5) & dep.product_id.isin(stocked_ids)]
+        if len(dep):
+            names_ = cs.set_index("customer_id")["customer_name"]
+            st.markdown("**Products that depend on one customer** (half or more of their demand)")
+            st.dataframe(pd.DataFrame({"Product": dep.product_name, "Customer": dep.customer_id.map(names_),
+                                       "Share of the product's demand": dep.share_of_product.map(lambda x: f"{x:.0%}")}),
+                         hide_index=True, width="stretch")
+
+        st.markdown("**All customers**")
+        allv = cs.assign(**{"Customer": cs.customer_name, "Segment": cs.segment,
+                            "Sales (12 mo)": cs.revenue_12m.map(money), "Share": cs.share.map(lambda x: f"{x:.1%}"),
+                            "Orders (12 mo)": cs.orders_12m.astype(int),
+                            "Last order": cs.last_order.dt.strftime("%d %b %Y"), "Status": cs.status.map(CUST_ICON)})
+        cols_ = ["Customer", "Segment", "Sales (12 mo)", "Share", "Orders (12 mo)", "Last order", "Status"]
+        if not cs.segment.astype(str).str.strip().any():
+            cols_.remove("Segment")
+        st.dataframe(allv[cols_], hide_index=True, width="stretch", height=320)
+
+        if cs.segment.astype(str).str.strip().any():
+            seg = cs.groupby("segment")["revenue_12m"].sum().sort_values()
+            fig = go.Figure(go.Bar(y=seg.index, x=[cfg.convert(v, data_ccy, SHOW) / SCALE for v in seg.values],
+                                   orientation="h", marker=dict(color=BLUE, cornerradius=4),
+                                   customdata=[[money(v)] for v in seg.values],
+                                   hovertemplate="%{y}<br>%{customdata[0]}<extra></extra>"))
+            fig.update_xaxes(title=f"Sales, last 12 months ({SCALE_LABEL})")
+            st.markdown("**Sales by customer type**")
+            st.plotly_chart(style_fig(fig, 260), width="stretch")
+
+        st.markdown("**What does one customer buy?**")
+        who = st.selectbox("Customer", cs.customer_name.tolist(), key="cust_pick")
+        cid = cs.loc[cs.customer_name == who, "customer_id"].iloc[0]
+        mine = mix[mix.customer_id == cid].sort_values("revenue", ascending=False)
+        if len(mine):
+            st.dataframe(pd.DataFrame({"Product": mine.product_name, "Units (12 mo)": mine.units.astype(int),
+                                       "Sales (12 mo)": mine.revenue.map(money),
+                                       "Their share of this product's demand": mine.share_of_product.map(lambda x: f"{x:.0%}")}),
+                         hide_index=True, width="stretch")
+        else:
+            st.caption("No purchases in the last 12 months.")
 
 # ---------------------------------------------------------------------------
 # 4. Stuck stock
